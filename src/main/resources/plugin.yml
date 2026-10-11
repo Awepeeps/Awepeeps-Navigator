@@ -1,8 +1,8 @@
 name: AwepeepsNavigator
-version: 1.2.0
+version: 1.3.0
 main: com.awepeeps.navigator.AwepeepsNavigator
 api-version: '1.20'
-description: Shared points of interest directory with compass-based access.
+description: Shared lodestone-marked points of interest directory; vanilla controls compass binding.
 commands:
   navigator:
     description: Open the points of interest menu or manage points.

@@ -16,7 +16,7 @@ Lodestone-bound compasses do not open the Navigator menu and cannot be used to c
 
 ## Create a point
 
-Stand at the location to save, hold exactly one ordinary compass, and run:
+Look directly at a placed lodestone from within 5 blocks, hold exactly one ordinary compass, and run:
 
 ```text
 /navigator set home
@@ -28,13 +28,15 @@ An optional group organizes the menu:
 /navigator set mine landmarks
 ```
 
-Names and groups allow 1–32 letters, numbers, underscores, or hyphens. Names are unique without regard to case. A successful save spends one use from the compass. Failed creation, including invalid or duplicate names and config save failures, is free. The compass is consumed when its last use is spent.
+The target must be the lodestone block itself, with no intervening block in the sight ray. The saved coordinates are the lodestone block's integer x/y/z coordinates, not your position. Names and groups allow 1–32 letters, numbers, underscores, or hyphens. Names are unique without regard to case. A successful save spends one use from the compass. Failed creation, including no valid lodestone target, invalid or duplicate names, permission denial, or config save failure, is free. The compass is consumed when its last use is spent.
 
-New managed compasses have 64 uses by default. Existing managed compasses retain their stored capacity and remaining uses. The `/navigator clear` command remains for compatibility and explains that binding is no longer supported; it does not alter compass data.
+New managed compasses have 64 uses by default. Existing managed compasses retain their stored capacity and remaining uses. After marking, right-click the ordinary compass on the lodestone to bind it using vanilla behavior. Navigator never binds, tracks, or modifies the needle. The `/navigator clear` command remains for compatibility and explains that binding is no longer supported; it does not alter compass data.
 
 ## Remove a point
 
 Run `/navigator remove <name>` to remove a POI you created. Administrators with `awepeepsnavigator.admin` can remove any POI. Removal does not affect compass targets or other items.
+
+Removing or replacing the physical lodestone does not delete the POI. Its stored world and coordinates remain in the directory as a record; Navigator does not check or repair lodestone placement. Existing POIs from earlier versions are retained at their saved coordinates without inventing or placing lodestones. The target requirement applies only to POIs created after upgrading.
 
 ## Legacy ordinary compass cleanup
 

@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import org.bukkit.Bukkit;
+import org.bukkit.block.Block;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -132,6 +133,12 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
     }
     EquipmentSlot hand = selectedHand(player);
     cleanLegacy(item);
+    Block target = player.getTargetBlockExact(5);
+    if (target == null || target.getType() != Material.LODESTONE) {
+      player.sendMessage(ChatColor.RED + "Look directly at a lodestone within 5 blocks to mark a point.");
+      writeHand(player, hand, item);
+      return;
+    }
     if (!valid(name) || !valid(group)) {
       player.sendMessage(
           ChatColor.RED
@@ -151,16 +158,14 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
     }
 
     String path = "teleports." + name;
-    var location = player.getLocation();
+    var location = target.getLocation();
     UUID id = UUID.randomUUID();
     getConfig().set(path + ".id", id.toString());
     getConfig().set(path + ".creator", player.getUniqueId().toString());
     getConfig().set(path + ".world", location.getWorld().getName());
-    getConfig().set(path + ".x", location.getX());
-    getConfig().set(path + ".y", location.getY());
-    getConfig().set(path + ".z", location.getZ());
-    getConfig().set(path + ".yaw", location.getYaw());
-    getConfig().set(path + ".pitch", location.getPitch());
+    getConfig().set(path + ".x", location.getBlockX());
+    getConfig().set(path + ".y", location.getBlockY());
+    getConfig().set(path + ".z", location.getBlockZ());
     getConfig().set(path + ".group", group);
     if (!saveChecked()) {
       getConfig().set(path, null);
@@ -257,7 +262,7 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
           ChatColor.YELLOW + "Create a point of interest with: /navigator set <name> [group]");
       player.sendMessage(
           ChatColor.GRAY
-              + "Hold exactly one ordinary compass; a successful creation spends one use.");
+              + "Look at a lodestone within 5 blocks. Hold one ordinary compass; a successful creation spends one use.");
       Bukkit.getScheduler().runTask(this, player::closeInventory);
     } else if (slot == 45 && holder.page > 0) {
       scheduleMenu(player, holder.page - 1, holder.snapshot, holder.hand);
