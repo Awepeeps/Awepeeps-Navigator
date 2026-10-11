@@ -1,26 +1,43 @@
 # Awepeeps Navigator
 
-Awepeeps Navigator is a shared directory of named points of interest (POIs). Players can browse saved names, groups, worlds, and coordinates. The plugin does not guide a compass needle, track destinations, teleport, or bind/sync compasses.
+Awepeeps Navigator maintains a shared directory of named points of interest (POIs). It shows saved names, groups, worlds, and coordinates. It does not guide a needle, teleport, or manage external map configuration. Existing `teleports` records remain in place across upgrades.
 
-## Player commands
+## Player use
 
-- `/navigator` opens the POI menu while holding exactly one ordinary compass in either hand.
-- `/navigator set <name> [group]` marks the lodestone block the player is directly looking at within 5 blocks. It requires exactly one ordinary compass.
-- `/navigator remove <name>` removes a POI you created. Administrators with `awepeepsnavigator.admin` can remove any POI.
-- `/navigator clear` remains as a legacy command and explains that compass binding is no longer supported.
+Run `/navigator` to browse (with `awepeepsnavigator.view`) and `/navigator set <name> [group]` to create (with `awepeepsnavigator.create`). Viewing can be configured to require the configured item. Creation always requires exactly one configured item, a permitted target block in direct view within 5 blocks, and create permission. The default item is an ordinary compass and the default target is a lodestone. With the default sneak setting, sneak-right-click opens the directory; this interaction never binds or changes compass targets. Normal non-sneak lodestone right-clicking remains vanilla. Lodestone-bound compasses are always passed through and are never modified.
 
-Menu entries and selection show only the POI name, group, world, and coordinates. Browsing and viewing details are free. A successful POI creation spends one use from its required compass; failed creation does not. The default capacity is 64 uses per managed compass, and the compass is consumed after its final successful creation. New POIs store the lodestone block's integer coordinates. The compass remains ordinary until its owner binds it with vanilla right-click behavior; Navigator never chooses or changes compass targets.
+When durability is enabled, successful creation spends one use, default 64, and the item breaks on its last use. Failed creation and browsing are free. With durability disabled, creation does not change any item charge, lore, damage, maximum damage, or metadata, including old worn managed items. See the [player guide](docs/player-guide.md) and [maintenance guide](docs/maintenance.md).
 
-Lodestone-bound compasses are excluded from menu or creation use. Right-clicking with one, or right-clicking a lodestone block, is left entirely to vanilla Minecraft. Navigator detects a lodestone tracker from either its target or serialized tracking component, without requiring the target world or block to be available, and never changes its target. A lodestone compass with old Navigator metadata remains untouched. Removing a lodestone does not delete its POI; stored records persist. Upgrade migration retains existing POI coordinates as-is, and the lodestone requirement applies only to new POIs.
+## Configuration
 
-See the [player guide](docs/player-guide.md) and [maintenance guide](docs/maintenance.md).
+```yaml
+item: COMPASS
+menu:
+  sneak-right-click: true
+durability:
+  enabled: true
+  creation-uses: 64
+creation:
+  allowed-blocks: [LODESTONE]
+visibility:
+  require-item: true
+permissions:
+  admin-bypass: false
+bluemap-markers: true
+```
 
-## Build and maintenance
+`item` is any Bukkit item material name. `menu.sneak-right-click` requires sneaking for every interaction-opened menu when true; ordinary non-sneak right-click passes through to vanilla. `durability.enabled` controls all Navigator item wear; `creation-uses` sets the capacity of newly managed items (1–1,000,000). `creation.allowed-blocks` is a list of Bukkit block material names accepted by `/navigator set`. `visibility.require-item: false` allows menu viewing without the item; creation still requires it. `permissions.admin-bypass` opts into `awepeepsnavigator.bypass`, which can bypass view/create permission nodes, but never item or target requirements. Both bypass settings default off.
 
-Run `automation/build-navigator.sh` from a system with Docker. It uses a digest-pinned Maven 3.9.9 / Eclipse Temurin 21 image and runs `mvn --batch-mode --no-transfer-progress clean verify`. The resulting jar is `target/awepeeps-navigator-1.4.0.jar`.
+On upgrade, if `durability.creation-uses` is absent, its value is initialized from legacy `compass-max-uses` (or 64 when absent). The obsolete key can then be removed. Existing managed items keep stored use counters and capacities while durability remains enabled.
 
-When BlueMap is installed, `bluemap-markers: true` (default) mirrors every POI, including legacy records, to a `Navigator POIs` marker set on each map of its resolved world. This uses the provided BlueMap API 2.7.7 dependency; BlueMap is optional. Set the option to `false` to disable markers. POI data remains in Navigator's existing `teleports` config; no marker file or BlueMap configuration is created. Removing a lodestone does not remove its saved POI or map marker.
+## Permissions and administration
 
-The seven unit tests cover finite POI coordinates, use counters, browsing/free failures, lodestone tracker detection, pass-through policy, and identity-based marker-set ownership. They do not replace manual client/server checks in the maintenance guide.
+`awepeepsnavigator.view` and `awepeepsnavigator.create` default to true. `awepeepsnavigator.admin` defaults to operators and allows removing any POI and issuing a regular compass. `awepeepsnavigator.bypass` defaults to operators, but has no effect until `permissions.admin-bypass: true`.
 
-This is an original replacement plugin. POI coordinates remain in the legacy `teleports` config section to preserve existing data. Keep deployment configuration and server data outside this repository.
+## BlueMap
+
+When installed, `bluemap-markers: true` (default) mirrors every POI, including legacy records, to a `Navigator POIs` marker set on maps for its resolved world. BlueMap API 2.7.7 is optional. Setting this option to false disables markers. BlueMap visibility is independent of the in-game menu item requirement. Removing a target block does not remove the POI or map marker.
+
+## Build
+
+Run `automation/build-navigator.sh` with Docker. It uses a digest-pinned Maven 3.9.9 / Eclipse Temurin 21 image and runs `mvn --batch-mode --no-transfer-progress clean verify`. The jar is `target/awepeeps-navigator-1.5.0.jar`.

@@ -1,6 +1,6 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
-  <groupId>com.awepeeps</groupId><artifactId>awepeeps-navigator</artifactId><version>1.4.0</version>
+<groupId>com.awepeeps</groupId><artifactId>awepeeps-navigator</artifactId><version>1.5.0</version>
   <properties><maven.compiler.release>21</maven.compiler.release><project.build.sourceEncoding>UTF-8</project.build.sourceEncoding><project.build.outputTimestamp>2026-10-11T00:00:00Z</project.build.outputTimestamp></properties>
   <repositories><repository><id>spigotmc-repo</id><url>https://hub.spigotmc.org/nexus/content/repositories/snapshots/</url></repository><repository><id>bluecolored</id><url>https://repo.bluecolored.de/releases</url></repository></repositories>
   <dependencies>

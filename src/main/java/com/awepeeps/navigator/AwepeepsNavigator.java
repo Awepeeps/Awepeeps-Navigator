@@ -14,6 +14,7 @@ import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.configuration.ConfigurationSection;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -21,6 +22,7 @@ import org.bukkit.event.block.Action;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerItemHeldEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
@@ -51,6 +53,7 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
     maxUses = new NamespacedKey(this, "max_uses");
     legacyDestination = new NamespacedKey(this, "destination");
     legacyWaypointId = new NamespacedKey(this, "waypoint_id");
+    migrateCapacitySetting();
     capacity = readCapacity();
     migrateIds();
     if (Bukkit.getPluginManager().getPlugin("BlueMap") != null) {
@@ -82,15 +85,20 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
       return true;
     }
     if (args.length == 0) {
-      ItemStack item = compass(player);
-      if (!NavigatorPolicy.canUseCompass(item != null, item == null ? 0 : item.getAmount())) {
-        player.sendMessage(ChatColor.RED + "Hold exactly one ordinary compass in either hand.");
+      if (!player.hasPermission("awepeepsnavigator.view") && !bypass(player)) {
+        player.sendMessage(ChatColor.RED + "You cannot view points of interest.");
         return true;
       }
-      EquipmentSlot hand = selectedHand(player);
-      cleanLegacy(item);
-      writeHand(player, hand, item);
-      openMenu(player, 0, item.clone(), hand);
+      ItemStack item = compass(player);
+      if (item != null && item.getAmount() != 1) item = null;
+      if (!NavigatorPolicy.mayOpenMenu(item != null, getConfig().getBoolean("visibility.require-item", true))) {
+        player.sendMessage(ChatColor.RED + "Hold one " + configuredItem().name().toLowerCase().replace('_', ' ') + " to view points of interest.");
+        return true;
+      }
+      EquipmentSlot hand = item == null ? null : selectedHand(player);
+      if (item != null && getConfig().getBoolean("durability.enabled", true)) cleanLegacy(item);
+      if (item != null && hand != null) writeHand(player, hand, item);
+      openMenu(player, 0, item == null ? null : item.clone(), hand);
       return true;
     }
     if (args[0].equalsIgnoreCase("set")) {
@@ -119,9 +127,9 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
       if (recipient == null) {
         player.sendMessage(ChatColor.RED + "Player is not online.");
       } else {
-        recipient.getInventory().addItem(new ItemStack(Material.COMPASS));
+        recipient.getInventory().addItem(new ItemStack(configuredItem()));
         player.sendMessage(
-            ChatColor.GREEN + "Gave a regular compass to " + recipient.getName() + ".");
+            ChatColor.GREEN + "Gave the configured item to " + recipient.getName() + ".");
       }
       return true;
     }
@@ -155,20 +163,20 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
   }
 
   private void create(Player player, String name, String group) {
-    if (!player.hasPermission("awepeepsnavigator.create")) {
+    if (!player.hasPermission("awepeepsnavigator.create") && !bypass(player)) {
       player.sendMessage(ChatColor.RED + "You cannot create points of interest.");
       return;
     }
     ItemStack item = compass(player);
-    if (!NavigatorPolicy.canUseCompass(item != null, item == null ? 0 : item.getAmount())) {
-      player.sendMessage(ChatColor.RED + "Hold exactly one ordinary compass in either hand.");
+    if (!NavigatorPolicy.mayCreate(item != null && item.getAmount() == 1, player.hasPermission("awepeepsnavigator.create"), getConfig().getBoolean("permissions.admin-bypass", false), player.hasPermission("awepeepsnavigator.bypass"))) {
+      player.sendMessage(ChatColor.RED + "Hold exactly one " + configuredItem().name().toLowerCase().replace('_', ' ') + " and have permission to create points.");
       return;
     }
     EquipmentSlot hand = selectedHand(player);
-    cleanLegacy(item);
+    if (durabilityEnabled()) cleanLegacy(item);
     Block target = player.getTargetBlockExact(5);
-    if (target == null || target.getType() != Material.LODESTONE) {
-      player.sendMessage(ChatColor.RED + "Look directly at a lodestone within 5 blocks to mark a point.");
+    if (target == null || !allowedBlock(target.getType())) {
+      player.sendMessage(ChatColor.RED + "Look directly at an allowed block within 5 blocks to mark a point.");
       writeHand(player, hand, item);
       return;
     }
@@ -184,7 +192,7 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
       writeHand(player, hand, item);
       return;
     }
-    if (managed(item) && remaining(item) <= 0) {
+    if (durabilityEnabled() && managed(item) && remaining(item) <= 0) {
       player.sendMessage(ChatColor.RED + "This compass has no uses remaining.");
       writeHand(player, hand, item);
       return;
@@ -210,8 +218,11 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
 
     refreshBlueMap();
 
-    if (!managed(item)) initialize(item);
-    boolean survived = charge(item);
+    boolean survived = true;
+    if (durabilityEnabled()) {
+      if (!managed(item)) initialize(item);
+      if (NavigatorPolicy.shouldCharge(durabilityEnabled(), managed(item))) survived = charge(item);
+    }
     writeHand(player, hand, item);
     player.sendMessage(
         survived
@@ -261,17 +272,19 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
     }
     Player player = event.getPlayer();
     ItemStack item = event.getItem();
-    boolean clickedLodestone =
-        event.getClickedBlock() != null
-            && event.getClickedBlock().getType() == Material.LODESTONE;
+    boolean requireSneak = getConfig().getBoolean("menu.sneak-right-click", true);
+    boolean clickedLodestone = event.getClickedBlock() != null
+        && event.getClickedBlock().getType() == Material.LODESTONE;
+    if (clickedLodestone && !player.isSneaking()) return;
+    if (!NavigatorPolicy.mayOpenInteractionMenu(requireSneak, player.isSneaking())) return;
+    if (!player.hasPermission("awepeepsnavigator.view") && !bypass(player)) return;
     ItemStack mainHand = player.getInventory().getItemInMainHand();
     boolean offhandFallback =
         event.getHand() == EquipmentSlot.OFF_HAND
-            && (plain(mainHand) || isLodestoneCompass(mainHand));
-    if (NavigatorPolicy.shouldPassRightClick(
-        clickedLodestone, isLodestoneCompass(item), offhandFallback)) return;
-    if (!plain(item) || item.getAmount() != 1) return;
-    cleanLegacy(item);
+            && (isConfiguredItem(mainHand) || isLodestoneCompass(mainHand));
+    if (isLodestoneCompass(item) || offhandFallback) return;
+    if (!isConfiguredItem(item) || item.getAmount() != 1) return;
+    if (durabilityEnabled()) cleanLegacy(item);
     event.setCancelled(true);
     writeHand(player, event.getHand(), item);
     ItemStack snapshot = item.clone();
@@ -289,6 +302,7 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
     if (!(event.getView().getTopInventory().getHolder() instanceof Holder holder)) return;
     event.setCancelled(true);
     if (!(event.getWhoClicked() instanceof Player player)) return;
+    if (!validHolderItem(player, holder)) { Bukkit.getScheduler().runTask(this, player::closeInventory); return; }
     if (event.getClickedInventory() != event.getView().getTopInventory()) return;
     int slot = event.getRawSlot();
     if (slot == 49) {
@@ -298,7 +312,7 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
           ChatColor.YELLOW + "Create a point of interest with: /navigator set <name> [group]");
       player.sendMessage(
           ChatColor.GRAY
-              + "Look at a lodestone within 5 blocks. Hold one ordinary compass; a successful creation spends one use.");
+              + "Look at an allowed block within 5 blocks and hold the configured item. A successful creation spends one use when durability is enabled.");
       Bukkit.getScheduler().runTask(this, player::closeInventory);
     } else if (slot == 45 && holder.page > 0) {
       scheduleMenu(player, holder.page - 1, holder.snapshot, holder.hand);
@@ -315,16 +329,27 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
     if (event.getView().getTopInventory().getHolder() instanceof Holder) event.setCancelled(true);
   }
 
+  @EventHandler
+  public void heldItemChanged(PlayerItemHeldEvent event) {
+    if (!(event.getPlayer().getOpenInventory().getTopInventory().getHolder() instanceof Holder holder)
+        || holder.hand != EquipmentSlot.HAND) return;
+    Bukkit.getScheduler().runTask(this, () -> {
+      if (!event.getPlayer().isOnline()) return;
+      ItemStack current = event.getPlayer().getInventory().getItem(event.getNewSlot());
+      if (!isConfiguredItem(current) || holder.snapshot == null || !current.isSimilar(holder.snapshot))
+        event.getPlayer().closeInventory();
+    });
+  }
+
   private void scheduleMenu(Player player, int page, ItemStack snapshot, EquipmentSlot hand) {
     Bukkit.getScheduler().runTask(this, () -> openMenu(player, page, snapshot, hand));
   }
 
   private void openMenu(Player player, int page, ItemStack snapshot, EquipmentSlot hand) {
     if (!player.isOnline()) return;
-    ItemStack held = hand == EquipmentSlot.HAND
-        ? player.getInventory().getItemInMainHand()
-        : player.getInventory().getItemInOffHand();
-    if (!plain(held) || held.getAmount() != 1 || snapshot == null || !held.isSimilar(snapshot)) return;
+    if (!player.hasPermission("awepeepsnavigator.view") && !bypass(player)) return;
+    if (!NavigatorPolicy.mayOpenMenu(snapshot != null, getConfig().getBoolean("visibility.require-item", true))) return;
+    if (snapshot != null && !validHolderItem(player, new Holder(page, List.of(), snapshot, hand))) return;
     List<Destination> entries = destinations();
     Holder holder = new Holder(page, entries, snapshot, hand);
     Inventory inventory = Bukkit.createInventory(holder, 54, ChatColor.DARK_GREEN + "Navigator");
@@ -351,12 +376,27 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
     inventory.setItem(45, button(Material.ARROW, "Previous page"));
     inventory.setItem(49, button(Material.BARRIER, "Close"));
     inventory.setItem(53, button(Material.ARROW, "Next page"));
-    if (player.hasPermission("awepeepsnavigator.create")) {
+    if (player.hasPermission("awepeepsnavigator.create") || bypass(player)) {
       inventory.setItem(
           48, button(Material.EMERALD, "Create: /navigator set <name> [group]"));
     }
     player.openInventory(inventory);
+    Bukkit.getScheduler().runTaskTimer(this, task -> {
+      if (!player.isOnline() || player.getOpenInventory().getTopInventory().getHolder() != holder) {
+        task.cancel();
+        return;
+      }
+      if (!validHolderItem(player, holder)) player.closeInventory();
+    }, 1L, 1L);
     if (entries.isEmpty()) player.sendMessage(ChatColor.YELLOW + "No points of interest configured.");
+  }
+
+  private boolean validHolderItem(Player player, Holder holder) {
+    if (holder.snapshot == null) return !getConfig().getBoolean("visibility.require-item", true);
+    if (holder.hand == null) return false;
+    ItemStack held = holder.hand == EquipmentSlot.HAND
+        ? player.getInventory().getItemInMainHand() : player.getInventory().getItemInOffHand();
+    return isConfiguredItem(held) && held.getAmount() == 1 && held.isSimilar(holder.snapshot);
   }
 
   private ItemStack button(Material material, String text) {
@@ -370,6 +410,8 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
   private void select(Player player, Destination destination, Holder expected) {
     if (!player.isOnline()
         || player.getOpenInventory().getTopInventory().getHolder() != expected) return;
+    if (!validHolderItem(player, expected)) { player.closeInventory(); return; }
+    if (!player.hasPermission("awepeepsnavigator.view") && !bypass(player)) { player.closeInventory(); return; }
     Destination current = findById(destination.id);
     player.closeInventory();
     if (current == null) return;
@@ -388,13 +430,9 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
 
   private ItemStack compass(Player player) {
     ItemStack main = player.getInventory().getItemInMainHand();
-    if (plain(main)) return main;
+    if (isConfiguredItem(main)) return main;
     ItemStack off = player.getInventory().getItemInOffHand();
-    return plain(off) ? off : null;
-  }
-
-  private boolean plain(ItemStack item) {
-    return item != null && item.getType() == Material.COMPASS && !isLodestoneCompass(item);
+    return isConfiguredItem(off) ? off : null;
   }
 
   private boolean isLodestoneCompass(ItemStack item) {
@@ -413,10 +451,6 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
         && item.getItemMeta()
             .getPersistentDataContainer()
             .has(managed, PersistentDataType.BYTE);
-  }
-
-  private String get(ItemStack item, NamespacedKey key) {
-    return item.getItemMeta().getPersistentDataContainer().get(key, PersistentDataType.STRING);
   }
 
   private int itemCapacity(ItemStack item) {
@@ -440,7 +474,7 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
     item.setAmount(1);
     try {
       meta.setMaxStackSize(1);
-      if (meta instanceof Damageable damageable) damageable.setMaxDamage(capacity);
+      if (durabilityEnabled() && meta instanceof Damageable damageable) damageable.setMaxDamage(capacity);
     } catch (UnsupportedOperationException ignored) {
       // Some server implementations do not expose custom item durability.
     }
@@ -474,7 +508,7 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
         });
     lines.add(ChatColor.GRAY + "Navigator uses: " + left + "/" + itemCapacity);
     meta.setLore(lines);
-    if (meta instanceof Damageable damageable) {
+    if (durabilityEnabled() && meta instanceof Damageable damageable) {
       try {
         damageable.setMaxDamage(itemCapacity);
         damageable.setDamage(Math.max(0, itemCapacity - left));
@@ -486,7 +520,7 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
   }
 
   private void cleanLegacy(ItemStack item) {
-    if (!plain(item) || item.getItemMeta() == null) return;
+    if (!isConfiguredItem(item) || item.getItemMeta() == null) return;
     ItemMeta meta = item.getItemMeta();
     PersistentDataContainer data = meta.getPersistentDataContainer();
     boolean hadLegacy = data.has(legacyDestination, PersistentDataType.STRING)
@@ -577,8 +611,17 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
   }
 
   private int readCapacity() {
-    int configured = getConfig().getInt("compass-max-uses", 64);
+    int configured = getConfig().getInt("durability.creation-uses", getConfig().getInt("compass-max-uses", 64));
     return configured > 0 ? Math.min(configured, 1_000_000) : 64;
+  }
+
+  private void migrateCapacitySetting() {
+    java.io.File configFile = getDataFolder().toPath().resolve("config.yml").toFile();
+    YamlConfiguration stored = YamlConfiguration.loadConfiguration(configFile);
+    if (stored.contains("durability.creation-uses")) return;
+    int legacy = stored.getInt("compass-max-uses", 64);
+    getConfig().set("durability.creation-uses", legacy > 0 ? Math.min(legacy, 1_000_000) : 64);
+    if (!saveChecked()) throw new IllegalStateException("Could not save durability capacity migration");
   }
 
   private boolean valid(String value) {
@@ -586,9 +629,31 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
   }
 
   private EquipmentSlot selectedHand(Player player) {
-    return plain(player.getInventory().getItemInMainHand())
+    return isConfiguredItem(player.getInventory().getItemInMainHand())
         ? EquipmentSlot.HAND
         : EquipmentSlot.OFF_HAND;
+  }
+
+  private boolean durabilityEnabled() { return getConfig().getBoolean("durability.enabled", true); }
+
+  private Material configuredItem() {
+    Material material = Material.matchMaterial(getConfig().getString("item", "COMPASS"));
+    return material == null || !material.isItem() ? Material.COMPASS : material;
+  }
+
+  private boolean isConfiguredItem(ItemStack item) {
+    return item != null && item.getType() == configuredItem() && !isLodestoneCompass(item);
+  }
+
+  private boolean allowedBlock(Material material) {
+    List<String> allowed = getConfig().getStringList("creation.allowed-blocks");
+    if (allowed.isEmpty()) allowed = List.of("LODESTONE");
+    return allowed.stream().map(Material::matchMaterial).anyMatch(material::equals);
+  }
+
+  private boolean bypass(Player player) {
+    return getConfig().getBoolean("permissions.admin-bypass", false)
+        && player.hasPermission("awepeepsnavigator.bypass");
   }
 
   private record Destination(

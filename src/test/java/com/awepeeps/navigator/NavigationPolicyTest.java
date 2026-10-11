@@ -75,5 +75,31 @@ class NavigationPolicyTest {
     assertFalse(ownership.owns(mapA, owned));
     assertFalse(ownership.mayReconcile(mapA, foreignSameLabel));
   }
+
+  @Test
+  void configuredVisibilityAndCreationRequirementsStayIndependent() {
+    assertTrue(NavigatorPolicy.mayOpenMenu(true, true));
+    assertFalse(NavigatorPolicy.mayOpenMenu(false, true));
+    assertTrue(NavigatorPolicy.mayOpenMenu(false, false));
+    assertFalse(NavigatorPolicy.mayCreate(false, true, true, true));
+    assertFalse(NavigatorPolicy.mayCreate(true, false, false, true));
+    assertTrue(NavigatorPolicy.mayCreate(true, false, true, true));
+    assertFalse(NavigatorPolicy.mayCreate(true, false, false, true));
+  }
+
+  @Test
+  void durabilityDisabledNeverChargesEvenAnOldManagedItem() {
+    assertFalse(NavigatorPolicy.shouldCharge(false, true));
+    assertFalse(NavigatorPolicy.shouldCharge(false, false));
+    assertTrue(NavigatorPolicy.shouldCharge(true, true));
+    assertFalse(NavigatorPolicy.shouldCharge(true, false));
+  }
+
+  @Test
+  void sneakRightClickCanBeConfiguredToPassThrough() {
+    assertTrue(NavigatorPolicy.mayOpenInteractionMenu(true, true));
+    assertFalse(NavigatorPolicy.mayOpenInteractionMenu(true, false));
+    assertTrue(NavigatorPolicy.mayOpenInteractionMenu(false, false));
+  }
 }
 

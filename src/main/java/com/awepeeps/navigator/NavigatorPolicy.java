@@ -20,4 +20,20 @@ public final class NavigatorPolicy {
   public static int remainingAfterCreation(boolean creationSaved, int remaining) {
     return creationSaved ? NavigationMath.afterSuccessfulUse(remaining) : remaining;
   }
+
+  public static boolean mayOpenMenu(boolean hasRequiredItem, boolean requireItem) {
+    return hasRequiredItem || !requireItem;
+  }
+
+  public static boolean mayCreate(boolean hasRequiredItem, boolean hasPermission, boolean bypassEnabled, boolean hasBypass) {
+    return hasRequiredItem && (hasPermission || (bypassEnabled && hasBypass));
+  }
+
+  public static boolean mayOpenInteractionMenu(boolean sneakRightClickEnabled, boolean sneaking) {
+    return !sneakRightClickEnabled || sneaking;
+  }
+
+  public static boolean shouldCharge(boolean durabilityEnabled, boolean managed) {
+    return durabilityEnabled && managed;
+  }
 }
