@@ -53,5 +53,27 @@ class NavigationPolicyTest {
     assertEquals(8, NavigationMath.safeRemaining(false, null, 8));
     assertEquals(0, NavigationMath.safeRemaining(true, null, 64));
   }
+
+  @Test
+  void markerSetsAreOwnedPerMapByIdentityOnly() {
+    MarkerSetOwnership ownership = new MarkerSetOwnership();
+    Object mapA = new Object();
+    Object mapB = new Object();
+    Object owned = new String("Navigator POIs");
+    Object foreignSameLabel = new String("Navigator POIs");
+
+    assertTrue(ownership.mayReconcile(mapA, null));
+    ownership.claim(mapA, owned);
+    assertTrue(ownership.mayReconcile(mapA, owned));
+    assertFalse(ownership.mayReconcile(mapA, foreignSameLabel));
+    assertFalse(ownership.mayReconcile(mapB, foreignSameLabel));
+    assertTrue(ownership.mayReconcile(mapB, null));
+    assertTrue(ownership.owns(mapA, owned));
+    assertFalse(ownership.owns(mapB, owned));
+
+    ownership.clear();
+    assertFalse(ownership.owns(mapA, owned));
+    assertFalse(ownership.mayReconcile(mapA, foreignSameLabel));
+  }
 }
 

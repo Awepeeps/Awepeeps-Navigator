@@ -17,8 +17,10 @@ See the [player guide](docs/player-guide.md) and [maintenance guide](docs/mainte
 
 ## Build and maintenance
 
-Run `automation/build-navigator.sh` from a system with Docker. It uses a digest-pinned Maven 3.9.9 / Eclipse Temurin 21 image and runs `mvn --batch-mode --no-transfer-progress clean verify`. The resulting jar is `target/awepeeps-navigator-1.3.0.jar`.
+Run `automation/build-navigator.sh` from a system with Docker. It uses a digest-pinned Maven 3.9.9 / Eclipse Temurin 21 image and runs `mvn --batch-mode --no-transfer-progress clean verify`. The resulting jar is `target/awepeeps-navigator-1.4.0.jar`.
 
-The six unit tests cover finite POI coordinates, use counters, browsing/free failures, lodestone tracker detection, and pass-through policy. They do not replace manual client/server checks in the maintenance guide.
+When BlueMap is installed, `bluemap-markers: true` (default) mirrors every POI, including legacy records, to a `Navigator POIs` marker set on each map of its resolved world. This uses the provided BlueMap API 2.7.7 dependency; BlueMap is optional. Set the option to `false` to disable markers. POI data remains in Navigator's existing `teleports` config; no marker file or BlueMap configuration is created. Removing a lodestone does not remove its saved POI or map marker.
+
+The seven unit tests cover finite POI coordinates, use counters, browsing/free failures, lodestone tracker detection, pass-through policy, and identity-based marker-set ownership. They do not replace manual client/server checks in the maintenance guide.
 
 This is an original replacement plugin. POI coordinates remain in the legacy `teleports` config section to preserve existing data. Keep deployment configuration and server data outside this repository.

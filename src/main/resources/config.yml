@@ -1,2 +1,3 @@
 teleports: {}
 compass-max-uses: 64
+bluemap-markers: true

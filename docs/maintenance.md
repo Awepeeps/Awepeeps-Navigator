@@ -8,11 +8,24 @@ From the repository root, run:
 automation/build-navigator.sh
 ```
 
-The script uses a digest-pinned Maven 3.9.9 / Eclipse Temurin 21 container and runs `mvn --batch-mode --no-transfer-progress clean verify`. It writes `target/awepeeps-navigator-1.3.0.jar`. The project compiles for Java 21 against the pinned Spigot API version in `pom.xml`.
+The script uses a digest-pinned Maven 3.9.9 / Eclipse Temurin 21 container and runs `mvn --batch-mode --no-transfer-progress clean verify`. It writes `target/awepeeps-navigator-1.4.0.jar`. The project compiles for Java 21 against the pinned Spigot API and provided BlueMap API 2.7.7 in `pom.xml`. BlueMap API 2.8.2 has Java 25 class files, so it cannot be consumed by this Java 21 build.
 
-The six unit tests cover finite coordinates, use counters, free browsing/failed creation, and lodestone tracker and interaction policy. POI coordinates and creator IDs remain under the legacy `teleports` config section. Existing entries retain their coordinates and creator IDs; missing immutable IDs are still assigned at startup for stable POI identity. Upgrade does not infer or place lodestones for existing entries; the lodestone target requirement applies to new entries only.
+The seven unit tests cover finite coordinates, use counters, free browsing/failed creation, lodestone tracker and interaction policy, and marker-set identity ownership. POI coordinates and creator IDs remain under the legacy `teleports` config section. Existing entries retain their coordinates and creator IDs; missing immutable IDs are still assigned at startup for stable POI identity. Upgrade does not infer or place lodestones for existing entries; the lodestone target requirement applies to new entries only.
+
+## Optional BlueMap markers
+
+`bluemap-markers: true` is the default. With BlueMap installed and enabled, Navigator creates the fixed `awepeeps-navigator-pois` marker set (`Navigator POIs`) on every BlueMap map for each resolved Bukkit world and mirrors all configured POIs, including old records. It uses the immutable POI id for marker identity and retains stored decimal coordinates as-is. Only sets created by this bridge instance are reconciled or removed; an existing foreign set with the same key is left untouched. Names and legacy group values are HTML escaped in marker labels and details.
+
+The optional API bridge is loaded only when the BlueMap plugin is present. Its API callbacks can run asynchronously and may run immediately during registration; the bridge reads no Bukkit world or configuration from those callbacks. A main-thread snapshot contains only marker data and world UUIDs. API lifecycle changes invalidate queued reconciliations, and API calls are serialized through the bridge lifecycle lock. On BlueMap disable the bridge removes only its exact owned sets before the API callback returns; plugin shutdown unregisters its exact listeners and removes its owned sets when the API remains usable. Startup and successful POI creation/removal rebuild from config. API failures log a warning without preventing POI creation or removal. Set `bluemap-markers: false` to disable the integration. Missing BlueMap or unresolved worlds simply produce no markers. No separate marker data or BlueMap configuration is written.
 
 ## Manual acceptance gates
+
+- Install without BlueMap and verify the plugin loads, POI creation/removal works, and no BlueMap classes are loaded or required; repeat with BlueMap present and `bluemap-markers: false`.
+- With BlueMap present, verify startup creates one POI marker per record (including legacy records) on every map belonging to a loaded world; marker position preserves stored decimals, and marker label/detail safely display HTML-like legacy group text.
+- Create and remove POIs and verify map markers follow successful config saves only. Remove/replace a lodestone and verify its POI marker persists.
+- Reload BlueMap repeatedly and verify markers return once, queued callbacks never restore stale snapshots, and plugin disable unregisters listeners and removes only sets this bridge created.
+- Prepopulate an unrelated set using `awepeeps-navigator-pois`, including one labeled `Navigator POIs`; verify it remains unchanged and is not overwritten or removed.
+- Confirm API update failures only log a warning and do not roll back or block core POI save/removal.
 
 - Existing POI coordinates, groups, and creator IDs survive upgrade; missing POI IDs are saved.
 - Names that differ only by case collide; invalid names and groups are rejected.

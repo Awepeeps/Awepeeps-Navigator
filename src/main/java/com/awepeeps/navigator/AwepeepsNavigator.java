@@ -41,6 +41,7 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
   private NamespacedKey legacyDestination;
   private NamespacedKey legacyWaypointId;
   private int capacity;
+  private OptionalMapBridge blueMap;
 
   @Override
   public void onEnable() {
@@ -52,6 +53,20 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
     legacyWaypointId = new NamespacedKey(this, "waypoint_id");
     capacity = readCapacity();
     migrateIds();
+    if (Bukkit.getPluginManager().getPlugin("BlueMap") != null) {
+      try {
+        Class<?> bridgeClass = Class.forName("com.awepeeps.navigator.BlueMapBridge", true, getClassLoader());
+        blueMap = (OptionalMapBridge) bridgeClass.getConstructor(org.bukkit.plugin.Plugin.class).newInstance(this);
+        blueMap.start();
+      } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
+        if (blueMap != null) {
+          try { blueMap.stop(); } catch (RuntimeException | LinkageError ignored) { /* API unavailable; core remains usable. */ }
+          blueMap = null;
+        }
+        getLogger().warning("BlueMap markers unavailable: " + error.getMessage());
+      }
+    }
+    refreshBlueMap();
     Objects.requireNonNull(getCommand("navigator")).setExecutor(this);
     Bukkit.getPluginManager().registerEvents(this, this);
   }
@@ -112,6 +127,24 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
     }
     usage(player);
     return true;
+  }
+
+  @Override
+  public void onDisable() {
+    if (blueMap != null) blueMap.stop();
+  }
+
+  private void refreshBlueMap() {
+    if (blueMap == null) return;
+    List<OptionalMapBridge.Point> snapshot = new ArrayList<>();
+    for (Destination point : destinations()) {
+      org.bukkit.World world = Bukkit.getWorld(point.world);
+      if (world == null) continue;
+      snapshot.add(new OptionalMapBridge.Point(point.id, world.getUID(), point.name,
+          point.group == null ? "General" : point.group,
+          point.x, point.y, point.z));
+    }
+    blueMap.update(List.copyOf(snapshot));
   }
 
   private void usage(Player player) {
@@ -175,6 +208,8 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
       return;
     }
 
+    refreshBlueMap();
+
     if (!managed(item)) initialize(item);
     boolean survived = charge(item);
     writeHand(player, hand, item);
@@ -204,6 +239,7 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
       player.sendMessage(ChatColor.RED + "Could not save config; removal rolled back.");
       return;
     }
+    refreshBlueMap();
     player.sendMessage(ChatColor.GREEN + "Removed point of interest " + destination.name + ".");
   }
 
