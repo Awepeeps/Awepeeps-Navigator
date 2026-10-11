@@ -1,0 +1,15 @@
+.env
+.env.*
+*.local.*
+*.pem
+*.key
+target/
+build/
+*.jar
+data/
+logs/
+*.log
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
