@@ -1,0 +1,15 @@
+teleports: {}
+item: COMPASS
+menu:
+  sneak-right-click: true
+durability:
+  enabled: true
+  creation-uses: 64
+creation:
+  allowed-blocks: [LODESTONE]
+visibility:
+  require-item: true
+permissions:
+  admin-bypass: false
+compass-max-uses: 64 # Legacy alias; copied to durability.creation-uses when that key is absent.
+bluemap-markers: true
