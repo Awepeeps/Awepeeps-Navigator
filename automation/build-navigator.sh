@@ -13,4 +13,4 @@ docker run --rm \
   "$IMAGE" \
   mvn --batch-mode --no-transfer-progress clean verify
 
-printf 'Built %s\n' "$ROOT/target/awepeeps-navigator-1.1.0.jar"
+printf 'Built %s\n' "$ROOT/target/awepeeps-navigator-1.2.0.jar"

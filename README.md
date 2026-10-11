@@ -1,31 +1,24 @@
 # Awepeeps Navigator
 
-Awepeeps Navigator is a compass-based Minecraft waypoint guidance plugin. It helps players find shared waypoints in the same world and never teleports players.
+Awepeeps Navigator is a shared directory of named points of interest (POIs). Players can browse saved names, groups, worlds, and coordinates. The plugin does not guide a compass needle, track destinations, teleport, or bind/sync compasses.
 
 ## Player commands
 
-- `/navigator` opens the waypoint menu while holding exactly one ordinary compass.
-- `/navigator set <name> [group]` creates a waypoint at your current location and binds the held compass to it.
-- `/navigator clear` unbinds the held compass. It does not restore uses.
-- `/navigator remove <name>` removes a waypoint you created. Administrators with `awepeepsnavigator.admin` can remove any waypoint.
+- `/navigator` opens the POI menu while holding exactly one ordinary compass in either hand.
+- `/navigator set <name> [group]` saves the player's current location as a shared POI. It requires exactly one ordinary compass.
+- `/navigator remove <name>` removes a POI you created. Administrators with `awepeepsnavigator.admin` can remove any POI.
+- `/navigator clear` remains as a legacy command and explains that compass binding is no longer supported.
 
-To use a waypoint, open the menu with the same single compass and select an entry. Guidance follows the managed compass you hold. Browsing and selecting its current waypoint are free; creating a waypoint or changing its binding costs one use. The default maximum is 64 uses per managed compass.
+Menu entries and selection show only the POI name, group, world, and coordinates. Browsing and viewing details are free. A successful POI creation spends one use from its required compass; failed creation does not. The default capacity is 64 uses per managed compass, and the compass is consumed after its final successful creation.
 
-Links must be within a configurable 16-block three-dimensional radius and in the same world. Failed attempts, including attempts outside that radius or in another world, do not charge a use. The plugin has no player or waypoint teleport feature.
+Lodestone-bound compasses are excluded from menu and creation use. Right-clicking with one, or right-clicking a lodestone block, is left entirely to vanilla Minecraft. Navigator detects a lodestone tracker from either its target or serialized tracking component, without requiring the target world or block to be available, and never changes its target. A lodestone compass with old Navigator metadata remains untouched.
 
-See the [player guide](docs/player-guide.md) for usage details.
+See the [player guide](docs/player-guide.md) and [maintenance guide](docs/maintenance.md).
 
 ## Build and maintenance
 
-Run `automation/build-navigator.sh` from a system with Docker. The script uses a digest-pinned Maven 3.9.9 / Eclipse Temurin 21 image and runs `mvn --batch-mode --no-transfer-progress clean verify` from the repository root. The resulting jar is `target/awepeeps-navigator-1.1.0.jar`.
+Run `automation/build-navigator.sh` from a system with Docker. It uses a digest-pinned Maven 3.9.9 / Eclipse Temurin 21 image and runs `mvn --batch-mode --no-transfer-progress clean verify`. The resulting jar is `target/awepeeps-navigator-1.2.0.jar`.
 
-The build runs eight unit tests for navigation math and policy behavior. These tests do not replace the manual client/server acceptance checks in the [maintenance guide](docs/maintenance.md).
+The six unit tests cover finite POI coordinates, use counters, browsing/free failures, lodestone tracker detection, and pass-through policy. They do not replace manual client/server checks in the maintenance guide.
 
-This is an original replacement plugin. No upstream Navigator source is included.
-
-## Repository workflow
-
-The canonical repository is [Awepeeps/Awepeeps-Navigator](https://github.com/Awepeeps/Awepeeps-Navigator).
-Work in the personal fork, push to origin, and open a PR targeting the org's main branch.
-The plugin repository owns source, tests, generic documentation and build tooling.
-Keep live waypoint configs, server data, addresses and authentication files out of this repository.
+This is an original replacement plugin. POI coordinates remain in the legacy `teleports` config section to preserve existing data. Keep deployment configuration and server data outside this repository.

@@ -1,585 +1,516 @@
 package com.awepeeps.navigator;
 
 import java.io.IOException;
-import java.util.*;
-import net.md_5.bungee.api.ChatMessageType;
-import net.md_5.bungee.api.chat.TextComponent;
-import org.bukkit.*;
-import org.bukkit.command.*;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
+import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
+import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.entity.Player;
-import org.bukkit.event.*;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
-import org.bukkit.event.inventory.*;
-import org.bukkit.event.player.*;
-import org.bukkit.inventory.*;
-import org.bukkit.inventory.meta.*;
-import org.bukkit.persistence.*;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
+import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.inventory.EquipmentSlot;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.InventoryHolder;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.CompassMeta;
+import org.bukkit.inventory.meta.Damageable;
+import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.persistence.PersistentDataContainer;
+import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
 
+/** A shared directory of points of interest. The vanilla compass needle is never changed. */
 public final class AwepeepsNavigator extends JavaPlugin implements Listener {
   private static final int PAGE_SIZE = 45;
-  private NamespacedKey managed, boundName, boundId, uses, maxUses;
-  private double radius;
+  private NamespacedKey managed;
+  private NamespacedKey uses;
+  private NamespacedKey maxUses;
+  private NamespacedKey legacyDestination;
+  private NamespacedKey legacyWaypointId;
   private int capacity;
 
   @Override
   public void onEnable() {
     saveDefaultConfig();
     managed = new NamespacedKey(this, "managed");
-    boundName = new NamespacedKey(this, "destination");
-    boundId = new NamespacedKey(this, "waypoint_id");
     uses = new NamespacedKey(this, "uses");
     maxUses = new NamespacedKey(this, "max_uses");
-    radius = readRadius();
+    legacyDestination = new NamespacedKey(this, "destination");
+    legacyWaypointId = new NamespacedKey(this, "waypoint_id");
     capacity = readCapacity();
     migrateIds();
     Objects.requireNonNull(getCommand("navigator")).setExecutor(this);
     Bukkit.getPluginManager().registerEvents(this, this);
-    Bukkit.getScheduler().runTaskTimer(this, this::updateTracking, 20, 20);
   }
 
   @Override
-  public void onDisable() {
-    for (Player p : Bukkit.getOnlinePlayers()) resetCompass(p);
-  }
-
-  @Override
-  public boolean onCommand(CommandSender sender, Command command, String label, String[] a) {
-    if (!(sender instanceof Player p)) {
+  public boolean onCommand(
+      org.bukkit.command.CommandSender sender,
+      org.bukkit.command.Command command,
+      String label,
+      String[] args) {
+    if (!(sender instanceof Player player)) {
       sender.sendMessage("This command requires a player.");
       return true;
     }
-    if (a.length == 0) {
-      ItemStack held = compass(p);
-      if (held == null || held.getAmount() != 1) {
-        p.sendMessage(ChatColor.RED + "Hold exactly one regular compass in your main or off hand.");
+    if (args.length == 0) {
+      ItemStack item = compass(player);
+      if (!NavigatorPolicy.canUseCompass(item != null, item == null ? 0 : item.getAmount())) {
+        player.sendMessage(ChatColor.RED + "Hold exactly one ordinary compass in either hand.");
         return true;
       }
-      openMenu(p, 0, held.clone(), selectedHand(p));
+      EquipmentSlot hand = selectedHand(player);
+      cleanLegacy(item);
+      writeHand(player, hand, item);
+      openMenu(player, 0, item.clone(), hand);
       return true;
     }
-    if (a[0].equalsIgnoreCase("set")) {
-      if (a.length < 2 || a.length > 3) {
-        usage(p);
-        return true;
+    if (args[0].equalsIgnoreCase("set")) {
+      if (args.length < 2 || args.length > 3) {
+        usage(player);
+      } else {
+        create(player, args[1], args.length == 3 ? args[2] : "General");
       }
-      create(p, a[1], a.length == 3 ? a[2] : "General");
       return true;
     }
-    if (a[0].equalsIgnoreCase("clear") && a.length == 1) {
-      ItemStack it = compass(p);
-      if (it == null || it.getAmount() != 1) {
-        p.sendMessage(ChatColor.RED + "Hold exactly one compass to unbind.");
-        return true;
-      }
-      EquipmentSlot hand = selectedHand(p);
-      if (managed(it)) clearBinding(it);
-      writeHand(p, hand, it);
-      resetCompass(p);
-      p.sendMessage(ChatColor.GREEN + "Compass unbound. Wear was not restored.");
+    if (args[0].equalsIgnoreCase("clear") && args.length == 1) {
+      player.sendMessage(
+          ChatColor.YELLOW + "Navigator no longer binds compasses; there is nothing to clear.");
       return true;
     }
-    if (a[0].equalsIgnoreCase("remove") && a.length == 2) {
-      Destination d = find(a[1]);
-      if (d == null) {
-        p.sendMessage(ChatColor.RED + "Unknown destination.");
-        return true;
-      }
-      if (!p.hasPermission("awepeepsnavigator.admin")
-          && !p.getUniqueId().toString().equals(d.creator)) {
-        p.sendMessage(ChatColor.RED + "You can remove only your own destinations.");
-        return true;
-      }
-      Map<String, Object> old =
-          new LinkedHashMap<>(
-              getConfig().getConfigurationSection("teleports." + d.name).getValues(true));
-      getConfig().set("teleports." + d.name, null);
-      if (!saveChecked()) {
-        getConfig().set("teleports." + d.name, old);
-        p.sendMessage(ChatColor.RED + "Could not save config; removal rolled back.");
-        return true;
-      }
-      for (Player online : Bukkit.getOnlinePlayers()) {
-        ItemStack held = compass(online);
-        if (managed(held) && Objects.equals(get(held, boundId), d.id)) resetCompass(online);
-      }
-      p.sendMessage(
-          ChatColor.GREEN + "Removed " + d.name + ". Bound compasses will show unavailable.");
+    if (args[0].equalsIgnoreCase("remove") && args.length == 2) {
+      remove(player, args[1]);
       return true;
     }
-    if (!p.hasPermission("awepeepsnavigator.admin")) {
-      p.sendMessage(ChatColor.RED + "That subcommand is for administrators.");
-      return true;
-    }
-    if (a[0].equalsIgnoreCase("item") && (a.length == 1 || a.length == 2)) {
-      Player to = a.length == 2 ? Bukkit.getPlayerExact(a[1]) : p;
-      if (to == null) {
-        p.sendMessage(ChatColor.RED + "Player is not online.");
+    if (args[0].equalsIgnoreCase("item") && (args.length == 1 || args.length == 2)) {
+      if (!player.hasPermission("awepeepsnavigator.admin")) {
+        player.sendMessage(ChatColor.RED + "That subcommand is for administrators.");
         return true;
       }
-      to.getInventory().addItem(new ItemStack(Material.COMPASS));
-      p.sendMessage(ChatColor.GREEN + "Gave a regular compass to " + to.getName() + ".");
+      Player recipient = args.length == 2 ? Bukkit.getPlayerExact(args[1]) : player;
+      if (recipient == null) {
+        player.sendMessage(ChatColor.RED + "Player is not online.");
+      } else {
+        recipient.getInventory().addItem(new ItemStack(Material.COMPASS));
+        player.sendMessage(
+            ChatColor.GREEN + "Gave a regular compass to " + recipient.getName() + ".");
+      }
       return true;
     }
-    usage(p);
+    usage(player);
     return true;
   }
 
-  private void usage(Player p) {
-    p.sendMessage(
+  private void usage(Player player) {
+    player.sendMessage(
         ChatColor.YELLOW
             + "/navigator | /navigator set <name> [group] | /navigator clear | /navigator remove"
             + " <name> | /navigator item [player]");
   }
 
-  private void create(Player p, String name, String group) {
-    if (!p.hasPermission("awepeepsnavigator.create")) {
-      p.sendMessage(ChatColor.RED + "You cannot create waypoints.");
+  private void create(Player player, String name, String group) {
+    if (!player.hasPermission("awepeepsnavigator.create")) {
+      player.sendMessage(ChatColor.RED + "You cannot create points of interest.");
       return;
     }
-    ItemStack it = compass(p);
-    if (it == null || it.getAmount() != 1) {
-      p.sendMessage(
-          ChatColor.RED
-              + "Hold exactly one regular compass (main hand preferred, off hand fallback).");
+    ItemStack item = compass(player);
+    if (!NavigatorPolicy.canUseCompass(item != null, item == null ? 0 : item.getAmount())) {
+      player.sendMessage(ChatColor.RED + "Hold exactly one ordinary compass in either hand.");
       return;
     }
+    EquipmentSlot hand = selectedHand(player);
+    cleanLegacy(item);
     if (!valid(name) || !valid(group)) {
-      p.sendMessage(
+      player.sendMessage(
           ChatColor.RED
               + "Names and groups must be 1–32 letters, numbers, underscores, or hyphens.");
+      writeHand(player, hand, item);
       return;
     }
     if (nameExists(name)) {
-      p.sendMessage(ChatColor.RED + "A waypoint with that name already exists.");
+      player.sendMessage(ChatColor.RED + "A point of interest with that name already exists.");
+      writeHand(player, hand, item);
       return;
     }
-    if (managed(it) && remaining(it) <= 0) {
-      p.sendMessage(ChatColor.RED + "This compass has no uses remaining.");
+    if (managed(item) && remaining(item) <= 0) {
+      player.sendMessage(ChatColor.RED + "This compass has no uses remaining.");
+      writeHand(player, hand, item);
       return;
     }
+
     String path = "teleports." + name;
-    Location l = p.getLocation();
+    var location = player.getLocation();
     UUID id = UUID.randomUUID();
     getConfig().set(path + ".id", id.toString());
-    getConfig().set(path + ".creator", p.getUniqueId().toString());
-    getConfig().set(path + ".world", l.getWorld().getName());
-    getConfig().set(path + ".x", l.getX());
-    getConfig().set(path + ".y", l.getY());
-    getConfig().set(path + ".z", l.getZ());
-    getConfig().set(path + ".yaw", l.getYaw());
-    getConfig().set(path + ".pitch", l.getPitch());
+    getConfig().set(path + ".creator", player.getUniqueId().toString());
+    getConfig().set(path + ".world", location.getWorld().getName());
+    getConfig().set(path + ".x", location.getX());
+    getConfig().set(path + ".y", location.getY());
+    getConfig().set(path + ".z", location.getZ());
+    getConfig().set(path + ".yaw", location.getYaw());
+    getConfig().set(path + ".pitch", location.getPitch());
     getConfig().set(path + ".group", group);
     if (!saveChecked()) {
       getConfig().set(path, null);
-      p.sendMessage(ChatColor.RED + "Could not save waypoint; no compass use charged.");
+      player.sendMessage(
+          ChatColor.RED + "Could not save point of interest; no compass use charged.");
+      writeHand(player, hand, item);
       return;
     }
-    EquipmentSlot hand = selectedHand(p);
-    if (!managed(it)) initialize(it);
-    bind(it, name, id.toString());
-    boolean survived = charge(it);
-    writeHand(p, hand, it);
-    if (!survived) {
-      p.sendMessage(
-          ChatColor.YELLOW + "Waypoint created, but that compass broke on its final use.");
+
+    if (!managed(item)) initialize(item);
+    boolean survived = charge(item);
+    writeHand(player, hand, item);
+    player.sendMessage(
+        survived
+            ? ChatColor.GREEN + "Created point of interest " + name + "."
+            : ChatColor.YELLOW + "Point of interest created; the compass broke on its final use.");
+  }
+
+  private void remove(Player player, String name) {
+    Destination destination = find(name);
+    if (destination == null) {
+      player.sendMessage(ChatColor.RED + "Unknown point of interest.");
       return;
     }
-    p.sendMessage(ChatColor.GREEN + "Created and bound waypoint " + name + ".");
+    if (!player.hasPermission("awepeepsnavigator.admin")
+        && !player.getUniqueId().toString().equals(destination.creator)) {
+      player.sendMessage(ChatColor.RED + "You can remove only points you created.");
+      return;
+    }
+    String path = "teleports." + destination.name;
+    Map<String, Object> old =
+        new LinkedHashMap<>(getConfig().getConfigurationSection(path).getValues(true));
+    getConfig().set(path, null);
+    if (!saveChecked()) {
+      getConfig().set(path, old);
+      player.sendMessage(ChatColor.RED + "Could not save config; removal rolled back.");
+      return;
+    }
+    player.sendMessage(ChatColor.GREEN + "Removed point of interest " + destination.name + ".");
   }
 
   private boolean saveChecked() {
     try {
       getConfig().save(getDataFolder().toPath().resolve("config.yml").toFile());
       return true;
-    } catch (IOException ex) {
-      getLogger().severe("Could not save config.yml: " + ex.getMessage());
+    } catch (IOException exception) {
+      getLogger().severe("Could not save config.yml: " + exception.getMessage());
       return false;
     }
   }
 
   @EventHandler
-  public void onUse(PlayerInteractEvent e) {
-    if (e.getAction() != Action.RIGHT_CLICK_AIR && e.getAction() != Action.RIGHT_CLICK_BLOCK)
+  public void onUse(PlayerInteractEvent event) {
+    if (event.getAction() != Action.RIGHT_CLICK_AIR
+        && event.getAction() != Action.RIGHT_CLICK_BLOCK) {
       return;
-    Player p = e.getPlayer();
-    ItemStack i = e.getItem();
-    if (!plain(i) || isLodestone(i) || i.getAmount() != 1) return;
-    if (e.getClickedBlock() != null && e.getClickedBlock().getType() == Material.LODESTONE) return;
-    if (e.getHand() == EquipmentSlot.OFF_HAND && plain(p.getInventory().getItemInMainHand()))
-      return;
-    e.setCancelled(true);
-    EquipmentSlot hand = e.getHand();
-    ItemStack snapshot = i.clone();
+    }
+    Player player = event.getPlayer();
+    ItemStack item = event.getItem();
+    boolean clickedLodestone =
+        event.getClickedBlock() != null
+            && event.getClickedBlock().getType() == Material.LODESTONE;
+    ItemStack mainHand = player.getInventory().getItemInMainHand();
+    boolean offhandFallback =
+        event.getHand() == EquipmentSlot.OFF_HAND
+            && (plain(mainHand) || isLodestoneCompass(mainHand));
+    if (NavigatorPolicy.shouldPassRightClick(
+        clickedLodestone, isLodestoneCompass(item), offhandFallback)) return;
+    if (!plain(item) || item.getAmount() != 1) return;
+    cleanLegacy(item);
+    event.setCancelled(true);
+    writeHand(player, event.getHand(), item);
+    ItemStack snapshot = item.clone();
+    EquipmentSlot hand = event.getHand();
     Bukkit.getScheduler()
         .runTask(
             this,
             () -> {
-              if (p.isOnline()) openMenu(p, 0, snapshot, hand);
+              if (player.isOnline()) openMenu(player, 0, snapshot, hand);
             });
   }
 
   @EventHandler
-  public void click(InventoryClickEvent e) {
-    if (!(e.getView().getTopInventory().getHolder() instanceof Holder h)) return;
-    e.setCancelled(true);
-    if (!(e.getWhoClicked() instanceof Player p)) return;
-    if (e.getClickedInventory() != e.getView().getTopInventory()) return;
-    int s = e.getRawSlot();
-    if (s == 49) {
-      Bukkit.getScheduler().runTask(this, p::closeInventory);
-      return;
-    }
-    if (s == 48) {
-      p.sendMessage(ChatColor.YELLOW + "Create with: /navigator set <name> [group]");
-      p.sendMessage(
+  public void click(InventoryClickEvent event) {
+    if (!(event.getView().getTopInventory().getHolder() instanceof Holder holder)) return;
+    event.setCancelled(true);
+    if (!(event.getWhoClicked() instanceof Player player)) return;
+    if (event.getClickedInventory() != event.getView().getTopInventory()) return;
+    int slot = event.getRawSlot();
+    if (slot == 49) {
+      Bukkit.getScheduler().runTask(this, player::closeInventory);
+    } else if (slot == 48) {
+      player.sendMessage(
+          ChatColor.YELLOW + "Create a point of interest with: /navigator set <name> [group]");
+      player.sendMessage(
           ChatColor.GRAY
-              + "Hold exactly one regular compass; creation binds it and spends one use.");
-      Bukkit.getScheduler().runTask(this, p::closeInventory);
-      return;
-    }
-    if (s == 45 && h.page > 0) {
-      scheduleMenu(p, h.page - 1, h.snapshot, h.hand);
-      return;
-    }
-    if (s == 53 && (h.page + 1) * PAGE_SIZE < h.entries.size()) {
-      scheduleMenu(p, h.page + 1, h.snapshot, h.hand);
-      return;
-    }
-    if (s >= 0 && s < PAGE_SIZE && s + h.page * PAGE_SIZE < h.entries.size()) {
-      Destination d = h.entries.get(s + h.page * PAGE_SIZE);
-      Bukkit.getScheduler().runTask(this, () -> select(p, d, h.snapshot, h.hand, h));
+              + "Hold exactly one ordinary compass; a successful creation spends one use.");
+      Bukkit.getScheduler().runTask(this, player::closeInventory);
+    } else if (slot == 45 && holder.page > 0) {
+      scheduleMenu(player, holder.page - 1, holder.snapshot, holder.hand);
+    } else if (slot == 53 && (holder.page + 1) * PAGE_SIZE < holder.entries.size()) {
+      scheduleMenu(player, holder.page + 1, holder.snapshot, holder.hand);
+    } else if (slot >= 0 && slot < PAGE_SIZE && slot + holder.page * PAGE_SIZE < holder.entries.size()) {
+      Destination destination = holder.entries.get(slot + holder.page * PAGE_SIZE);
+      Bukkit.getScheduler().runTask(this, () -> select(player, destination, holder));
     }
   }
 
   @EventHandler
-  public void drag(InventoryDragEvent e) {
-    if (e.getView().getTopInventory().getHolder() instanceof Holder) e.setCancelled(true);
+  public void drag(InventoryDragEvent event) {
+    if (event.getView().getTopInventory().getHolder() instanceof Holder) event.setCancelled(true);
   }
 
-  @EventHandler
-  public void close(PlayerQuitEvent e) {
-    resetCompass(e.getPlayer());
+  private void scheduleMenu(Player player, int page, ItemStack snapshot, EquipmentSlot hand) {
+    Bukkit.getScheduler().runTask(this, () -> openMenu(player, page, snapshot, hand));
   }
 
-  private void scheduleMenu(Player p, int page, ItemStack snapshot, EquipmentSlot hand) {
-    Bukkit.getScheduler().runTask(this, () -> openMenu(p, page, snapshot, hand));
-  }
-
-  private void openMenu(Player p, int page, ItemStack snapshot, EquipmentSlot hand) {
-    if (!p.isOnline()) return;
-    List<Destination> ds = destinations();
-    Holder h = new Holder(page, ds, snapshot, hand);
-    Inventory inv = Bukkit.createInventory(h, 54, ChatColor.DARK_GREEN + "Navigator");
-    h.inv = inv;
-    for (int s = 0; s < PAGE_SIZE && page * PAGE_SIZE + s < ds.size(); s++) {
-      Destination d = ds.get(page * PAGE_SIZE + s);
+  private void openMenu(Player player, int page, ItemStack snapshot, EquipmentSlot hand) {
+    if (!player.isOnline()) return;
+    ItemStack held = hand == EquipmentSlot.HAND
+        ? player.getInventory().getItemInMainHand()
+        : player.getInventory().getItemInOffHand();
+    if (!plain(held) || held.getAmount() != 1 || snapshot == null || !held.isSimilar(snapshot)) return;
+    List<Destination> entries = destinations();
+    Holder holder = new Holder(page, entries, snapshot, hand);
+    Inventory inventory = Bukkit.createInventory(holder, 54, ChatColor.DARK_GREEN + "Navigator");
+    holder.inventory = inventory;
+    for (int slot = 0; slot < PAGE_SIZE && page * PAGE_SIZE + slot < entries.size(); slot++) {
+      Destination destination = entries.get(page * PAGE_SIZE + slot);
       ItemStack icon = new ItemStack(Material.COMPASS);
-      ItemMeta m = icon.getItemMeta();
-      m.setDisplayName(ChatColor.GREEN + "[" + d.group + "] " + ChatColor.GOLD + d.name);
-      m.setLore(
+      ItemMeta meta = icon.getItemMeta();
+      meta.setDisplayName(
+          ChatColor.GREEN + "[" + destination.group + "] " + ChatColor.GOLD + destination.name);
+      meta.setLore(
           List.of(
-              ChatColor.GRAY + d.world + " " + d.x + ", " + d.y + ", " + d.z,
-              ChatColor.DARK_GRAY + "Select to navigate"));
-      icon.setItemMeta(m);
-      inv.setItem(s, icon);
+              ChatColor.GRAY
+                  + destination.world
+                  + " "
+                  + destination.x
+                  + ", "
+                  + destination.y
+                  + ", "
+                  + destination.z));
+      icon.setItemMeta(meta);
+      inventory.setItem(slot, icon);
     }
-    inv.setItem(45, button(Material.ARROW, "Previous page"));
-    inv.setItem(49, button(Material.BARRIER, "Close"));
-    inv.setItem(53, button(Material.ARROW, "Next page"));
-    if (p.hasPermission("awepeepsnavigator.create"))
-      inv.setItem(48, button(Material.EMERALD, "Create waypoint: /navigator set <name> [group]"));
-    p.openInventory(inv);
-    if (ds.isEmpty()) p.sendMessage(ChatColor.YELLOW + "No waypoints configured.");
+    inventory.setItem(45, button(Material.ARROW, "Previous page"));
+    inventory.setItem(49, button(Material.BARRIER, "Close"));
+    inventory.setItem(53, button(Material.ARROW, "Next page"));
+    if (player.hasPermission("awepeepsnavigator.create")) {
+      inventory.setItem(
+          48, button(Material.EMERALD, "Create: /navigator set <name> [group]"));
+    }
+    player.openInventory(inventory);
+    if (entries.isEmpty()) player.sendMessage(ChatColor.YELLOW + "No points of interest configured.");
   }
 
-  private ItemStack button(Material mat, String text) {
-    ItemStack i = new ItemStack(mat);
-    ItemMeta m = i.getItemMeta();
-    m.setDisplayName(ChatColor.YELLOW + text);
-    i.setItemMeta(m);
-    return i;
+  private ItemStack button(Material material, String text) {
+    ItemStack item = new ItemStack(material);
+    ItemMeta meta = item.getItemMeta();
+      meta.setDisplayName(ChatColor.YELLOW + text);
+    item.setItemMeta(meta);
+    return item;
   }
 
-  private void select(
-      Player p, Destination d, ItemStack snap, EquipmentSlot hand, Holder expected) {
-    if (!p.isOnline() || p.getOpenInventory().getTopInventory().getHolder() != expected) return;
-    ItemStack it =
-        hand == EquipmentSlot.HAND
-            ? p.getInventory().getItemInMainHand()
-            : p.getInventory().getItemInOffHand();
-    if (!sameItem(it, snap)) {
-      p.closeInventory();
-      p.sendMessage(
-          ChatColor.RED + "Keep the same single compass in the same hand while selecting.");
-      return;
-    }
-    Destination current = findById(d.id);
-    if (current == null) {
-      resetCompass(p);
-      p.closeInventory();
-      p.sendMessage(ChatColor.YELLOW + "That waypoint changed; reopen Navigator.");
-      return;
-    }
-    String prior = get(it, boundId);
-    if (!NavigationMath.shouldChargeBinding(prior, d.id)) {
-      p.closeInventory();
-      p.sendMessage(ChatColor.GREEN + "Already bound to " + d.name + "; no use charged.");
-      return;
-    }
-    if (managed(it) && remaining(it) <= 0) {
-      p.sendMessage(ChatColor.RED + "This compass has no uses remaining.");
-      return;
-    }
-    Location here = p.getLocation();
-    boolean sameWorld = p.getWorld().getName().equals(d.world);
-    if (!NavigationMath.canBind(
-        sameWorld, d.x - here.getX(), d.y - here.getY(), d.z - here.getZ(), radius)) {
-      if (!sameWorld) resetCompass(p);
-      p.sendMessage(
-          ChatColor.RED
-              + (sameWorld
-                  ? "Waypoint is outside the " + radius + " block link radius; no use charged."
-                  : "That waypoint is in another world; no use charged."));
-      return;
-    }
-    if (!managed(it)) initialize(it);
-    bind(it, d.name, d.id);
-    boolean survived = charge(it);
-    writeHand(p, hand, it);
-    p.closeInventory();
-    p.sendMessage(
-        survived
-            ? ChatColor.GREEN + "Compass bound to " + d.name + "."
-            : ChatColor.YELLOW + "Compass bound to " + d.name + ", then broke on its final use.");
+  private void select(Player player, Destination destination, Holder expected) {
+    if (!player.isOnline()
+        || player.getOpenInventory().getTopInventory().getHolder() != expected) return;
+    Destination current = findById(destination.id);
+    player.closeInventory();
+    if (current == null) return;
+    player.sendMessage(
+        ChatColor.GREEN + "[" + current.group + "] " + current.name);
+    player.sendMessage(
+        ChatColor.GRAY
+            + current.world
+            + " "
+            + current.x
+            + ", "
+            + current.y
+            + ", "
+            + current.z);
   }
 
-  private void updateTracking() {
-    for (Player p : Bukkit.getOnlinePlayers()) {
-      EquipmentSlot hand = selectedHand(p);
-      ItemStack i =
-          hand == EquipmentSlot.HAND
-              ? p.getInventory().getItemInMainHand()
-              : p.getInventory().getItemInOffHand();
-      if (!managed(i)) {
-        resetCompass(p);
-        continue;
-      }
-      syncDamage(i);
-      writeHand(p, hand, i);
-      String id = get(i, boundId), name = get(i, boundName);
-      if (id == null || id.isBlank()) {
-        resetCompass(p);
-        continue;
-      }
-      Destination d = findById(id);
-      if (d == null) {
-        resetCompass(p);
-        action(p, ChatColor.RED + "Waypoint unavailable: " + name);
-        continue;
-      }
-      if (!p.getWorld().getName().equals(d.world)) {
-        resetCompass(p);
-        action(p, ChatColor.YELLOW + name + " is in another world");
-        continue;
-      }
-      Location target = new Location(p.getWorld(), d.x, d.y, d.z);
-      p.setCompassTarget(target);
-      Location here = p.getLocation();
-      double dx = d.x - here.getX(),
-          dz = d.z - here.getZ(),
-          dist = NavigationMath.horizontalDistance(dx, dz);
-      String dir =
-          dist < 1 ? "HERE" : NavigationMath.direction(NavigationMath.relativeBearing(0, dx, dz));
-      action(
-          p,
-          ChatColor.GOLD
-              + name
-              + ChatColor.GRAY
-              + "  "
-              + dir
-              + "  "
-              + Math.round(dist)
-              + " blocks");
-    }
-  }
-
-  private void action(Player p, String s) {
-    p.spigot().sendMessage(ChatMessageType.ACTION_BAR, TextComponent.fromLegacyText(s));
-  }
-
-  private void resetCompass(Player p) {
-    p.setCompassTarget(p.getWorld().getSpawnLocation());
-  }
-
-  private ItemStack compass(Player p) {
-    ItemStack main = p.getInventory().getItemInMainHand();
+  private ItemStack compass(Player player) {
+    ItemStack main = player.getInventory().getItemInMainHand();
     if (plain(main)) return main;
-    ItemStack off = p.getInventory().getItemInOffHand();
+    ItemStack off = player.getInventory().getItemInOffHand();
     return plain(off) ? off : null;
   }
 
-  private boolean plain(ItemStack i) {
-    return i != null && i.getType() == Material.COMPASS && !isLodestone(i);
+  private boolean plain(ItemStack item) {
+    return item != null && item.getType() == Material.COMPASS && !isLodestoneCompass(item);
   }
 
-  private boolean isLodestone(ItemStack i) {
-    return i.getItemMeta() instanceof CompassMeta m && m.hasLodestone();
+  private boolean isLodestoneCompass(ItemStack item) {
+    if (item == null
+        || item.getType() != Material.COMPASS
+        || !(item.getItemMeta() instanceof CompassMeta meta)) return false;
+    boolean hasTarget = meta.hasLodestone();
+    boolean hasTrackingComponent = meta.serialize().containsKey("LodestoneTracked");
+    return NavigatorPolicy.isLodestoneCompass(hasTarget, hasTrackingComponent)
+        || meta.isLodestoneTracked();
   }
 
-  private boolean sameItem(ItemStack now, ItemStack snap) {
-    return now != null
-        && snap != null
-        && now.getAmount() == 1
-        && snap.getAmount() == 1
-        && now.isSimilar(snap)
-        && Objects.equals(get(now, boundId), get(snap, boundId))
-        && remaining(now) == remaining(snap);
+  private boolean managed(ItemStack item) {
+    return item != null
+        && item.getItemMeta() != null
+        && item.getItemMeta()
+            .getPersistentDataContainer()
+            .has(managed, PersistentDataType.BYTE);
   }
 
-  private boolean managed(ItemStack i) {
-    return i != null
-        && i.getItemMeta() != null
-        && i.getItemMeta().getPersistentDataContainer().has(managed, PersistentDataType.BYTE);
+  private String get(ItemStack item, NamespacedKey key) {
+    return item.getItemMeta().getPersistentDataContainer().get(key, PersistentDataType.STRING);
   }
 
-  private String get(ItemStack i, NamespacedKey k) {
-    return i.getItemMeta().getPersistentDataContainer().get(k, PersistentDataType.STRING);
+  private int itemCapacity(ItemStack item) {
+    Integer stored =
+        item.getItemMeta().getPersistentDataContainer().get(maxUses, PersistentDataType.INTEGER);
+    return NavigationMath.safeCapacity(stored, capacity);
   }
 
-  private int itemCapacity(ItemStack i) {
-    Integer n =
-        i.getItemMeta().getPersistentDataContainer().get(maxUses, PersistentDataType.INTEGER);
-    return NavigationMath.safeCapacity(n, capacity);
+  private int remaining(ItemStack item) {
+    Integer stored =
+        item.getItemMeta().getPersistentDataContainer().get(uses, PersistentDataType.INTEGER);
+    return NavigationMath.safeRemaining(managed(item), stored, itemCapacity(item));
   }
 
-  private int remaining(ItemStack i) {
-    Integer n = i.getItemMeta().getPersistentDataContainer().get(uses, PersistentDataType.INTEGER);
-    return NavigationMath.safeRemaining(managed(i), n, itemCapacity(i));
-  }
-
-  private void initialize(ItemStack i) {
-    ItemMeta m = i.getItemMeta();
-    PersistentDataContainer c = m.getPersistentDataContainer();
-    c.set(managed, PersistentDataType.BYTE, (byte) 1);
-    c.set(uses, PersistentDataType.INTEGER, capacity);
-    c.set(maxUses, PersistentDataType.INTEGER, capacity);
-    i.setAmount(1);
+  private void initialize(ItemStack item) {
+    ItemMeta meta = item.getItemMeta();
+    PersistentDataContainer data = meta.getPersistentDataContainer();
+    data.set(managed, PersistentDataType.BYTE, (byte) 1);
+    data.set(uses, PersistentDataType.INTEGER, capacity);
+    data.set(maxUses, PersistentDataType.INTEGER, capacity);
+    item.setAmount(1);
     try {
-      m.setMaxStackSize(1);
-      if (m instanceof Damageable d) d.setMaxDamage(capacity);
-    } catch (Exception ignored) {
+      meta.setMaxStackSize(1);
+      if (meta instanceof Damageable damageable) damageable.setMaxDamage(capacity);
+    } catch (UnsupportedOperationException ignored) {
+      // Some server implementations do not expose custom item durability.
     }
-    i.setItemMeta(m);
-    lore(i);
+    item.setItemMeta(meta);
+    lore(item);
   }
 
-  private void bind(ItemStack i, String name, String id) {
-    ItemMeta m = i.getItemMeta();
-    m.getPersistentDataContainer().set(boundName, PersistentDataType.STRING, name);
-    m.getPersistentDataContainer().set(boundId, PersistentDataType.STRING, id);
-    i.setItemMeta(m);
-    lore(i);
-  }
-
-  private void clearBinding(ItemStack i) {
-    ItemMeta m = i.getItemMeta();
-    m.getPersistentDataContainer().remove(boundName);
-    m.getPersistentDataContainer().remove(boundId);
-    i.setItemMeta(m);
-    lore(i);
-  }
-
-  private boolean charge(ItemStack i) {
-    int n = NavigationMath.afterSuccessfulUse(remaining(i));
-    if (n < 0) return false;
-    ItemMeta m = i.getItemMeta();
-    m.getPersistentDataContainer().set(uses, PersistentDataType.INTEGER, n);
-    i.setItemMeta(m);
-    lore(i);
-    if (n == 0) {
-      i.setAmount(0);
+  private boolean charge(ItemStack item) {
+    int after = NavigatorPolicy.remainingAfterCreation(true, remaining(item));
+    if (after < 0) return false;
+    ItemMeta meta = item.getItemMeta();
+    meta.getPersistentDataContainer().set(uses, PersistentDataType.INTEGER, after);
+    item.setItemMeta(meta);
+    lore(item);
+    if (after == 0) {
+      item.setAmount(0);
       return false;
     }
     return true;
   }
 
-  private void lore(ItemStack i) {
-    ItemMeta m = i.getItemMeta();
-    int cap = itemCapacity(i), left = remaining(i);
-    List<String> l = m.hasLore() ? new ArrayList<>(m.getLore()) : new ArrayList<>();
-    l.removeIf(
-        s ->
-            ChatColor.stripColor(s).startsWith("Navigator uses:")
-                || ChatColor.stripColor(s).startsWith("Navigator bound:"));
-    l.add(ChatColor.GRAY + "Navigator uses: " + left + "/" + cap);
-    String n = get(i, boundName);
-    if (n != null) l.add(ChatColor.GRAY + "Navigator bound: " + n);
-    m.setLore(l);
-    if (m instanceof Damageable d) {
+  private void lore(ItemStack item) {
+    ItemMeta meta = item.getItemMeta();
+    int itemCapacity = itemCapacity(item);
+    int left = remaining(item);
+    List<String> lines = meta.hasLore() ? new ArrayList<>(meta.getLore()) : new ArrayList<>();
+    lines.removeIf(
+        line -> {
+          String plain = ChatColor.stripColor(line);
+          return plain.startsWith("Navigator uses:") || plain.startsWith("Navigator bound:");
+        });
+    lines.add(ChatColor.GRAY + "Navigator uses: " + left + "/" + itemCapacity);
+    meta.setLore(lines);
+    if (meta instanceof Damageable damageable) {
       try {
-        d.setMaxDamage(cap);
-        d.setDamage(Math.max(0, cap - left));
+        damageable.setMaxDamage(itemCapacity);
+        damageable.setDamage(Math.max(0, itemCapacity - left));
       } catch (UnsupportedOperationException ignored) {
+        // PDC remains the authoritative use counter.
       }
     }
-    i.setItemMeta(m);
+    item.setItemMeta(meta);
   }
 
-  private void syncDamage(ItemStack i) {
-    ItemMeta meta = i.getItemMeta();
-    if (!(meta instanceof Damageable d)) return;
-    int cap = itemCapacity(i), damage = Math.max(0, cap - remaining(i));
-    if (!d.hasMaxDamage() || d.getMaxDamage() != cap || d.getDamage() != damage) {
-      d.setMaxDamage(cap);
-      d.setDamage(damage);
-      i.setItemMeta(meta);
+  private void cleanLegacy(ItemStack item) {
+    if (!plain(item) || item.getItemMeta() == null) return;
+    ItemMeta meta = item.getItemMeta();
+    PersistentDataContainer data = meta.getPersistentDataContainer();
+    boolean hadLegacy = data.has(legacyDestination, PersistentDataType.STRING)
+        || data.has(legacyWaypointId, PersistentDataType.STRING);
+    data.remove(legacyDestination);
+    data.remove(legacyWaypointId);
+    if (meta.hasLore()) {
+      List<String> lines = new ArrayList<>(meta.getLore());
+      boolean removed =
+          lines.removeIf(line -> ChatColor.stripColor(line).startsWith("Navigator bound:"));
+      if (removed) meta.setLore(lines.isEmpty() ? null : lines);
+      hadLegacy |= removed;
     }
+    if (hadLegacy) item.setItemMeta(meta);
   }
 
-  private void writeHand(Player p, EquipmentSlot hand, ItemStack item) {
-    if (hand == EquipmentSlot.HAND) p.getInventory().setItemInMainHand(item);
-    else p.getInventory().setItemInOffHand(item);
+  private void writeHand(Player player, EquipmentSlot hand, ItemStack item) {
+    if (hand == EquipmentSlot.HAND) player.getInventory().setItemInMainHand(item);
+    else player.getInventory().setItemInOffHand(item);
   }
 
   private List<Destination> destinations() {
-    List<Destination> out = new ArrayList<>();
-    ConfigurationSection s = getConfig().getConfigurationSection("teleports");
-    if (s == null) return out;
-    for (String n : s.getKeys(false)) {
-      ConfigurationSection p = s.getConfigurationSection(n);
-      if (p == null
-          || !valid(n)
-          || !NavigationMath.isFiniteCoordinate(p.get("x"))
-          || !NavigationMath.isFiniteCoordinate(p.get("y"))
-          || !NavigationMath.isFiniteCoordinate(p.get("z"))) continue;
-      String w = p.getString("world"), id = p.getString("id");
-      if (w == null || id == null) continue;
-      String g = p.getString("group", "General");
-      out.add(
+    List<Destination> result = new ArrayList<>();
+    ConfigurationSection section = getConfig().getConfigurationSection("teleports");
+    if (section == null) return result;
+    for (String name : section.getKeys(false)) {
+      ConfigurationSection point = section.getConfigurationSection(name);
+      if (point == null
+          || !valid(name)
+          || !NavigationMath.isFiniteCoordinate(point.get("x"))
+          || !NavigationMath.isFiniteCoordinate(point.get("y"))
+          || !NavigationMath.isFiniteCoordinate(point.get("z"))) continue;
+      String world = point.getString("world");
+      String id = point.getString("id");
+      if (world == null || id == null) continue;
+      result.add(
           new Destination(
-              n,
-              w,
-              p.getDouble("x"),
-              p.getDouble("y"),
-              p.getDouble("z"),
-              g,
-              p.getString("creator"),
+              name,
+              world,
+              point.getDouble("x"),
+              point.getDouble("y"),
+              point.getDouble("z"),
+              point.getString("group", "General"),
+              point.getString("creator"),
               id));
     }
-    out.sort(
-        Comparator.comparing((Destination d) -> d.group, String.CASE_INSENSITIVE_ORDER)
-            .thenComparing(d -> d.name, String.CASE_INSENSITIVE_ORDER));
-    return out;
+    result.sort(
+        Comparator.comparing(
+                (Destination point) -> point.group, String.CASE_INSENSITIVE_ORDER)
+            .thenComparing(point -> point.name, String.CASE_INSENSITIVE_ORDER));
+    return result;
   }
 
-  private Destination find(String n) {
-    return destinations().stream().filter(d -> d.name.equalsIgnoreCase(n)).findFirst().orElse(null);
+  private Destination find(String name) {
+    return destinations().stream()
+        .filter(point -> point.name.equalsIgnoreCase(name))
+        .findFirst()
+        .orElse(null);
   }
 
   private Destination findById(String id) {
-    return destinations().stream().filter(d -> d.id.equals(id)).findFirst().orElse(null);
+    return destinations().stream()
+        .filter(point -> point.id.equals(id))
+        .findFirst()
+        .orElse(null);
   }
 
   private boolean nameExists(String name) {
@@ -589,36 +520,34 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
   }
 
   private void migrateIds() {
-    ConfigurationSection s = getConfig().getConfigurationSection("teleports");
-    if (s == null) return;
+    ConfigurationSection points = getConfig().getConfigurationSection("teleports");
+    if (points == null) return;
     boolean changed = false;
-    for (String n : s.getKeys(false)) {
-      ConfigurationSection p = s.getConfigurationSection(n);
-      if (p != null && !p.contains("id")) {
-        p.set("id", UUID.randomUUID().toString());
+    for (String name : points.getKeys(false)) {
+      ConfigurationSection point = points.getConfigurationSection(name);
+      if (point != null && !point.contains("id")) {
+        point.set("id", UUID.randomUUID().toString());
         changed = true;
       }
     }
     if (changed && !saveChecked()) {
-      getLogger()
-          .severe(
-              "Waypoint ID migration could not be saved; disabling Navigator to prevent unstable bindings.");
-      throw new IllegalStateException("Waypoint ID migration must be saved before navigation starts");
+      throw new IllegalStateException("Could not save point ID migration");
     }
   }
 
-  private double readRadius() {
-    double x = getConfig().getDouble("link-radius", 16);
-    return Double.isFinite(x) && x >= 0 ? Math.min(x, 1_000_000) : 16;
-  }
-
   private int readCapacity() {
-    int n = getConfig().getInt("compass-max-uses", 64);
-    return n > 0 ? Math.min(n, 1_000_000) : 64;
+    int configured = getConfig().getInt("compass-max-uses", 64);
+    return configured > 0 ? Math.min(configured, 1_000_000) : 64;
   }
 
-  private boolean valid(String s) {
-    return s != null && s.matches("[A-Za-z0-9_-]{1,32}");
+  private boolean valid(String value) {
+    return value != null && value.matches("[A-Za-z0-9_-]{1,32}");
+  }
+
+  private EquipmentSlot selectedHand(Player player) {
+    return plain(player.getInventory().getItemInMainHand())
+        ? EquipmentSlot.HAND
+        : EquipmentSlot.OFF_HAND;
   }
 
   private record Destination(
@@ -631,29 +560,23 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
       String creator,
       String id) {}
 
-  private EquipmentSlot selectedHand(Player p) {
-    return plain(p.getInventory().getItemInMainHand())
-        ? EquipmentSlot.HAND
-        : EquipmentSlot.OFF_HAND;
-  }
-
   private static final class Holder implements InventoryHolder {
     final int page;
     final List<Destination> entries;
     final ItemStack snapshot;
     final EquipmentSlot hand;
-    Inventory inv;
+    Inventory inventory;
 
-    Holder(int p, List<Destination> e, ItemStack i, EquipmentSlot hand) {
-      page = p;
-      entries = List.copyOf(e);
-      snapshot = i == null ? null : i.clone();
+    Holder(int page, List<Destination> entries, ItemStack snapshot, EquipmentSlot hand) {
+      this.page = page;
+      this.entries = List.copyOf(entries);
+      this.snapshot = snapshot == null ? null : snapshot.clone();
       this.hand = hand;
     }
 
     @Override
     public Inventory getInventory() {
-      return inv;
+      return inventory;
     }
   }
 }

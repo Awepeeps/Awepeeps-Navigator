@@ -1,45 +1,41 @@
 # Player guide
 
-Awepeeps Navigator gives compass direction and distance guidance to waypoints in your current world. It never teleports you.
+Awepeeps Navigator keeps a shared directory of points of interest (POIs). Each entry shows its name, group, world, and saved coordinates. The menu does not provide live compass guidance, distance, availability status, or teleport actions.
 
-## Getting started
+## Browse points
 
-Hold exactly one ordinary compass, then run:
+Hold exactly one ordinary compass in your main hand or offhand, then run:
 
 ```text
 /navigator
 ```
 
-Choose a waypoint from the menu. Keep that same compass in your main or off hand to follow its guidance. A stack of compasses and a lodestone compass cannot be linked.
+Right-clicking with an ordinary compass also opens the menu. Selecting an entry displays its saved details. Browsing and viewing details do not change or charge the compass.
 
-## Create a waypoint
+Lodestone-bound compasses do not open the Navigator menu and cannot be used to create POIs. Right-clicking a lodestone-bound compass always follows vanilla behavior, even if its lodestone was removed or its dimension is unavailable. Right-clicking a lodestone block also follows vanilla behavior. With an ordinary main-hand compass and a lodestone offhand compass, the main-hand action can open Navigator; an offhand fallback will not open a second menu when the main-hand lodestone compass is being used.
 
-Stand at the location you want to save and hold a compass. Then run:
+## Create a point
+
+Stand at the location to save, hold exactly one ordinary compass, and run:
 
 ```text
 /navigator set home
 ```
 
-An optional group can organize the menu:
+An optional group organizes the menu:
 
 ```text
 /navigator set mine landmarks
 ```
 
-Creating a waypoint links that compass to the new waypoint and uses one charge. Waypoint names cannot overwrite existing names. A link must be in the same world and no more than 16 blocks away in three-dimensional distance. The radius is configurable by the server administrator.
+Names and groups allow 1–32 letters, numbers, underscores, or hyphens. Names are unique without regard to case. A successful save spends one use from the compass. Failed creation, including invalid or duplicate names and config save failures, is free. The compass is consumed when its last use is spent.
 
-## Uses and compass care
+New managed compasses have 64 uses by default. Existing managed compasses retain their stored capacity and remaining uses. The `/navigator clear` command remains for compatibility and explains that binding is no longer supported; it does not alter compass data.
 
-Each managed compass starts with up to 64 uses by default. Creating a waypoint or changing the compass to a different waypoint spends one use. Opening the menu, following guidance, selecting the compass's current waypoint, and failed attempts are free. Changing the configured maximum applies to newly initialized compasses; a managed compass retains its captured capacity.
+## Remove a point
 
-To remove the binding without restoring uses, hold the compass and run:
+Run `/navigator remove <name>` to remove a POI you created. Administrators with `awepeepsnavigator.admin` can remove any POI. Removal does not affect compass targets or other items.
 
-```text
-/navigator clear
-```
+## Legacy ordinary compass cleanup
 
-A compass is consumed when its final use is spent. Managed compass use data travels with the item through trades and server restarts.
-
-## Remove a waypoint
-
-Run `/navigator remove <name>` to remove one you created. Administrators can remove any waypoint. A removed waypoint cannot be followed by compasses that still reference it.
+When an ordinary compass is next used to open the menu or create a POI, its 1.1-era destination or waypoint ID metadata and `Navigator bound:` lore are removed. Its use count, capacity, and compass target are preserved. Lodestone-bound compasses, including ones carrying old Navigator tags, are not modified.

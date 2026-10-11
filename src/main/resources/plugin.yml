@@ -1,16 +1,16 @@
 name: AwepeepsNavigator
-version: 1.1.0
+version: 1.2.0
 main: com.awepeeps.navigator.AwepeepsNavigator
 api-version: '1.20'
-description: Craftable compass navigation to named destinations.
+description: Shared points of interest directory with compass-based access.
 commands:
   navigator:
-    description: Open compass navigation or manage destinations.
+    description: Open the points of interest menu or manage points.
     usage: /navigator [item [player]|set <name> [group]|remove <name>|clear]
 permissions:
   awepeepsnavigator.create:
-    description: Create named waypoints.
+    description: Create named points of interest.
     default: true
   awepeepsnavigator.admin:
-    description: Remove any waypoint and issue test compasses.
+    description: Remove any point of interest and issue test compasses.
     default: op
