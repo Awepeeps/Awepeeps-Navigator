@@ -152,6 +152,25 @@ class NavigationPolicyTest {
   }
 
   @Test
+  void chestSurfaceSearchUsesColumnHeightAndStaysWithinVerticalAndWorldBounds() {
+    assertEquals(65, SpawnProtectionPolicy.surfacePlacementY(64, 64, -64, 320));
+    assertEquals(80, SpawnProtectionPolicy.surfacePlacementY(79, 64, -64, 320));
+    assertEquals(-58, SpawnProtectionPolicy.surfacePlacementY(-59, -60, -64, 320));
+    assertNull(SpawnProtectionPolicy.surfacePlacementY(80, 64, -64, 320));
+    assertNull(SpawnProtectionPolicy.surfacePlacementY(-1, 0, 0, 256));
+    assertNull(SpawnProtectionPolicy.surfacePlacementY(254, 240, 0, 256));
+  }
+
+  @Test
+  void chestSurfaceRejectsLeavesLiquidsAndHazardousFloors() {
+    assertTrue(SpawnProtectionPolicy.safeFloor(true, false, false, false));
+    assertFalse(SpawnProtectionPolicy.safeFloor(false, false, false, false));
+    assertFalse(SpawnProtectionPolicy.safeFloor(true, true, false, false));
+    assertFalse(SpawnProtectionPolicy.safeFloor(true, false, true, false));
+    assertFalse(SpawnProtectionPolicy.safeFloor(true, false, false, true));
+  }
+
+  @Test
   void issuanceTombstonePreventsReplacementKitsInMemoryAndAfterRestart() {
     TestSupplyIssuance issuance = new TestSupplyIssuance();
     assertFalse(issuance.hasBeenIssued("world-id", false));
