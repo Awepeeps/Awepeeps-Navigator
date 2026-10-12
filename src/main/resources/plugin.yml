@@ -1,5 +1,5 @@
 name: AwepeepsNavigator
-version: 1.6.0
+version: 1.6.1
 main: com.awepeeps.navigator.AwepeepsNavigator
 api-version: '1.20'
 description: Shared lodestone-marked points of interest directory; vanilla controls compass binding.

@@ -8,8 +8,10 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.logging.Level;
 import org.bukkit.Bukkit;
+import org.bukkit.HeightMap;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
@@ -25,11 +27,24 @@ import org.bukkit.configuration.file.YamlConfiguration;
 final class TestSupplyChestManager {
   private static final int SEARCH_RADIUS = 8;
   private static final int DISCOVERY_Y = 8;
+  private static final Set<Material> UNSAFE_FLOORS = Set.of(
+      Material.CACTUS,
+      Material.MAGMA_BLOCK,
+      Material.CAMPFIRE,
+      Material.SOUL_CAMPFIRE,
+      Material.FIRE,
+      Material.SOUL_FIRE,
+      Material.POWDER_SNOW,
+      Material.SWEET_BERRY_BUSH,
+      Material.POINTED_DRIPSTONE,
+      Material.SLIME_BLOCK,
+      Material.HONEY_BLOCK);
   private final JavaPlugin plugin;
   private final NamespacedKey ownedKey;
   private final File storeFile;
   private final YamlConfiguration store;
   private final Map<String, Long> retryAfterNanos = new HashMap<>();
+  private final Map<String, Long> nextNoCandidateLogNanos = new HashMap<>();
   private final TestSupplyIssuance issuance = new TestSupplyIssuance();
   private boolean invalidConfigLogged;
 
@@ -83,11 +98,19 @@ final class TestSupplyChestManager {
       retryAfterNanos.put(worldId, now + java.util.concurrent.TimeUnit.SECONDS.toNanos(30));
       return;
     }
-    Block candidate = findSafeCandidate(world, permittedSearchRadius, spawnRadius);
-    if (candidate == null) {
+    SearchResult search = findSafeCandidate(world, permittedSearchRadius, spawnRadius);
+    if (search.block() == null) {
       retryAfterNanos.put(worldId, now + java.util.concurrent.TimeUnit.SECONDS.toNanos(30));
+      if (now >= nextNoCandidateLogNanos.getOrDefault(worldId, 0L)) {
+        plugin.getLogger().info("Test supplies placement deferred: no safe loaded surface in the bounded spawn search "
+            + "(columns=" + search.columns() + ", loaded=" + search.loadedColumns()
+            + ", surfaces=" + search.surfacesInRange() + ", safeFloors=" + search.safeFloors()
+            + ", clearSpots=" + search.clearSpots() + ").");
+        nextNoCandidateLogNanos.put(worldId, now + java.util.concurrent.TimeUnit.MINUTES.toNanos(5));
+      }
       return;
     }
+    Block candidate = search.block();
     // Persist the at-most-once reservation before changing the world. If storage is unavailable,
     // leave the world untouched; a crash after reservation may forfeit a kit, never duplicate it.
     if (!reserveIssuance(worldPath, worldId)) return;
@@ -106,6 +129,7 @@ final class TestSupplyChestManager {
     BlockState placedState = candidate.getState();
     if (placedState instanceof Chest placedChest) seedOnce(placedChest);
     retryAfterNanos.remove(worldId);
+    nextNoCandidateLogNanos.remove(worldId);
   }
 
   private Block findOwnedNearSpawn(World world, int radius) {
@@ -133,7 +157,7 @@ final class TestSupplyChestManager {
     return null;
   }
 
-  private Block findSafeCandidate(World world, int radius, int protectionRadius) {
+  private SearchResult findSafeCandidate(World world, int radius, int protectionRadius) {
     var spawn = world.getSpawnLocation();
     int centerX = spawn.getBlockX();
     int centerY = spawn.getBlockY();
@@ -148,21 +172,35 @@ final class TestSupplyChestManager {
       }
     }
     offsets.sort(Comparator.comparingInt(offset -> offset[0] * offset[0] + offset[1] * offset[1]));
+    int loadedColumns = 0;
+    int surfacesInRange = 0;
+    int safeFloors = 0;
+    int clearSpots = 0;
     for (int[] offset : offsets) {
       int x = centerX + offset[0];
       int z = centerZ + offset[1];
       if (!world.isChunkLoaded(x >> 4, z >> 4)) continue;
-      for (int dy = -2; dy <= 3; dy++) {
-        int y = centerY + dy;
-        if (y <= world.getMinHeight() || y + 1 >= world.getMaxHeight()) continue;
-        Block floor = world.getBlockAt(x, y - 1, z);
-        Block spot = world.getBlockAt(x, y, z);
-        Block headroom = world.getBlockAt(x, y + 1, z);
-        if (TestSupplyPolicy.isSafePlacement(floor.getType().isSolid(), floor.isLiquid(),
-            spot.getType().isAir(), headroom.getType().isAir(), nextToChest(spot))) return spot;
-      }
+      loadedColumns++;
+      int surfaceBlockY = world.getHighestBlockYAt(x, z, HeightMap.MOTION_BLOCKING_NO_LEAVES);
+      Integer y = SpawnProtectionPolicy.surfacePlacementY(
+          surfaceBlockY, centerY, world.getMinHeight(), world.getMaxHeight());
+      if (y == null) continue;
+      surfacesInRange++;
+      Block floor = world.getBlockAt(x, y - 1, z);
+      Material floorType = floor.getType();
+      boolean leaves = floorType.name().equals("LEAVES") || floorType.name().endsWith("_LEAVES");
+      boolean hazardous = UNSAFE_FLOORS.contains(floorType);
+      if (!SpawnProtectionPolicy.safeFloor(floorType.isSolid(), floor.isLiquid(), leaves, hazardous)) continue;
+      safeFloors++;
+      Block spot = world.getBlockAt(x, y, z);
+      Block headroom = world.getBlockAt(x, y + 1, z);
+      if (!world.getWorldBorder().isInside(spot.getLocation())) continue;
+      if (!TestSupplyPolicy.isSafePlacement(true, false,
+          spot.getType().isAir(), headroom.getType().isAir(), nextToChest(spot))) continue;
+      clearSpots++;
+      return new SearchResult(spot, offsets.size(), loadedColumns, surfacesInRange, safeFloors, clearSpots);
     }
-    return null;
+    return new SearchResult(null, offsets.size(), loadedColumns, surfacesInRange, safeFloors, clearSpots);
   }
 
   private boolean nextToChest(Block block) {
@@ -216,4 +254,7 @@ final class TestSupplyChestManager {
       inventory.addItem(new ItemStack(stack.material(), stack.amount()));
     }
   }
+
+  private record SearchResult(
+      Block block, int columns, int loadedColumns, int surfacesInRange, int safeFloors, int clearSpots) {}
 }
