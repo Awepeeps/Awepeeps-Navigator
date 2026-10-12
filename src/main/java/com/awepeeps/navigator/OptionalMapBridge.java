@@ -7,7 +7,8 @@ import java.util.UUID;
 interface OptionalMapBridge {
   void start();
   void stop();
-  void update(List<Point> points);
+  void update(List<Point> points, List<Spawn> spawns);
 
   record Point(String id, UUID worldId, String name, String group, double x, double y, double z) {}
+  record Spawn(UUID worldId, String worldName, double x, double y, double z) {}
 }

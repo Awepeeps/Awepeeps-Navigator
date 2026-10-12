@@ -25,4 +25,8 @@ final class MarkerSetOwnership {
   void clear() {
     sets.clear();
   }
+
+  void clear(Object map) {
+    sets.remove(map);
+  }
 }
