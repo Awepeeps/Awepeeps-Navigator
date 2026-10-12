@@ -13,3 +13,8 @@ permissions:
   admin-bypass: false
 compass-max-uses: 64 # Legacy alias; copied to durability.creation-uses when that key is absent.
 bluemap-markers: true
+bluemap-spawn-marker: false
+test-supplies:
+  enabled: false
+  expires-on: ""
+  timezone: ""

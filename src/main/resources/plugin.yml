@@ -1,5 +1,5 @@
 name: AwepeepsNavigator
-version: 1.5.0
+version: 1.6.0
 main: com.awepeeps.navigator.AwepeepsNavigator
 api-version: '1.20'
 description: Shared lodestone-marked points of interest directory; vanilla controls compass binding.
@@ -7,13 +7,13 @@ softdepend: [BlueMap]
 commands:
   navigator:
     description: Open the points of interest menu or manage points.
-    usage: /navigator [item [player]|set <name> [group]|remove <name>|clear]
+    usage: /navigator [item [player]|set <name> [group]|remove <name>|clear|spawn <on|off>]
 permissions:
   awepeepsnavigator.create:
     description: Create named points of interest.
     default: true
   awepeepsnavigator.admin:
-    description: Remove any point of interest and issue the configured item.
+    description: Manage point removals, configured items, and the BlueMap spawn marker.
     default: op
   awepeepsnavigator.view:
     description: View the POI directory.

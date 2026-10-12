@@ -44,6 +44,7 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
   private NamespacedKey legacyWaypointId;
   private int capacity;
   private OptionalMapBridge blueMap;
+  private TestSupplyChestManager testSupplies;
 
   @Override
   public void onEnable() {
@@ -56,6 +57,7 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
     migrateCapacitySetting();
     capacity = readCapacity();
     migrateIds();
+    testSupplies = new TestSupplyChestManager(this);
     if (Bukkit.getPluginManager().getPlugin("BlueMap") != null) {
       try {
         Class<?> bridgeClass = Class.forName("com.awepeeps.navigator.BlueMapBridge", true, getClassLoader());
@@ -72,6 +74,8 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
     refreshBlueMap();
     Objects.requireNonNull(getCommand("navigator")).setExecutor(this);
     Bukkit.getPluginManager().registerEvents(this, this);
+    Bukkit.getScheduler().runTaskTimer(this, this::refreshBlueMap, 100L, 100L);
+    Bukkit.getScheduler().runTaskTimer(this, testSupplies::tick, 1L, 100L);
   }
 
   @Override
@@ -80,6 +84,9 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
       org.bukkit.command.Command command,
       String label,
       String[] args) {
+    if (args.length > 0 && args[0].equalsIgnoreCase("spawn")) {
+      return manageSpawnMarker(sender, args);
+    }
     if (!(sender instanceof Player player)) {
       sender.sendMessage("This command requires a player.");
       return true;
@@ -152,14 +159,46 @@ public final class AwepeepsNavigator extends JavaPlugin implements Listener {
           point.group == null ? "General" : point.group,
           point.x, point.y, point.z));
     }
-    blueMap.update(List.copyOf(snapshot));
+    List<OptionalMapBridge.Spawn> spawns = new ArrayList<>();
+    if (getConfig().getBoolean("bluemap-spawn-marker", false)) {
+      org.bukkit.World world = SpawnWorldSelection.primaryNormalWorld(
+          Bukkit.getWorlds(), org.bukkit.World::getEnvironment);
+      if (world != null) {
+        var location = world.getSpawnLocation();
+        spawns.add(new OptionalMapBridge.Spawn(world.getUID(), world.getName(),
+            location.getX(), location.getY(), location.getZ()));
+      }
+    }
+    blueMap.update(List.copyOf(snapshot), List.copyOf(spawns));
+  }
+
+  private boolean manageSpawnMarker(org.bukkit.command.CommandSender sender, String[] args) {
+    if (!sender.hasPermission("awepeepsnavigator.admin")) {
+      sender.sendMessage(ChatColor.RED + "That subcommand is for administrators.");
+      return true;
+    }
+    if (args.length != 2 || (!args[1].equalsIgnoreCase("on") && !args[1].equalsIgnoreCase("off"))) {
+      sender.sendMessage(ChatColor.YELLOW + "Usage: /navigator spawn <on|off>");
+      return true;
+    }
+    boolean previous = getConfig().getBoolean("bluemap-spawn-marker", false);
+    boolean enabled = args[1].equalsIgnoreCase("on");
+    getConfig().set("bluemap-spawn-marker", enabled);
+    if (!saveChecked()) {
+      getConfig().set("bluemap-spawn-marker", previous);
+      sender.sendMessage(ChatColor.RED + "Could not save config; spawn marker setting was unchanged.");
+      return true;
+    }
+    refreshBlueMap();
+    sender.sendMessage(ChatColor.GREEN + "BlueMap spawn marker " + (enabled ? "enabled." : "disabled."));
+    return true;
   }
 
   private void usage(Player player) {
     player.sendMessage(
         ChatColor.YELLOW
             + "/navigator | /navigator set <name> [group] | /navigator clear | /navigator remove"
-            + " <name> | /navigator item [player]");
+            + " <name> | /navigator item [player] | /navigator spawn <on|off>");
   }
 
   private void create(Player player, String name, String group) {
