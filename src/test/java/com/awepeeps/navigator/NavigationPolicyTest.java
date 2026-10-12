@@ -198,7 +198,16 @@ class NavigationPolicyTest {
         org.bukkit.Material.LODESTONE, org.bukkit.Material.RED_BED, org.bukkit.Material.COMPASS,
         org.bukkit.Material.BRUSH, org.bukkit.Material.OAK_LOG, org.bukkit.Material.OAK_PLANKS,
         org.bukkit.Material.COBBLESTONE, org.bukkit.Material.CRAFTING_TABLE, org.bukkit.Material.STICK,
-        org.bukkit.Material.TORCH, org.bukkit.Material.DIAMOND, org.bukkit.Material.IRON_INGOT)));
+        org.bukkit.Material.TORCH, org.bukkit.Material.DIAMOND, org.bukkit.Material.IRON_INGOT,
+        org.bukkit.Material.WHITE_BANNER, org.bukkit.Material.RED_BANNER, org.bukkit.Material.ANVIL,
+        org.bukkit.Material.DIAMOND_SWORD, org.bukkit.Material.DIAMOND_PICKAXE,
+        org.bukkit.Material.DIAMOND_AXE, org.bukkit.Material.DIAMOND_SHOVEL,
+        org.bukkit.Material.DIAMOND_HOE, org.bukkit.Material.DIAMOND_HELMET,
+        org.bukkit.Material.DIAMOND_CHESTPLATE, org.bukkit.Material.DIAMOND_LEGGINGS,
+        org.bukkit.Material.DIAMOND_BOOTS, org.bukkit.Material.COOKED_BEEF)));
+    assertEquals(99, TestSupplyKit.stacks().stream()
+        .filter(stack -> stack.material() == org.bukkit.Material.COOKED_BEEF)
+        .mapToInt(TestSupplyKit.Stack::amount).sum());
     int slots = TestSupplyKit.stacks().stream().mapToInt(stack ->
         (stack.amount() + stack.material().getMaxStackSize() - 1) / stack.material().getMaxStackSize()).sum();
     assertTrue(slots <= 27, "The entire test kit must fit in one chest, including unstackable beds and brushes");
@@ -230,4 +239,3 @@ class NavigationPolicyTest {
     assertTrue(NavigatorPolicy.mayOpenInteractionMenu(false, false));
   }
 }
-
