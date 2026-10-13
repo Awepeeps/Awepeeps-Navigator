@@ -1,5 +1,8 @@
 # Awepeeps Navigator
 
+> **Retired.** This repository is archived and no longer maintained. It is kept read-only for
+> reference; do not reactivate or unarchive it. See [`AGENTS.md`](AGENTS.md).
+
 Awepeeps Navigator maintains a shared directory of named points of interest (POIs). It shows saved names, groups, worlds, and coordinates. It does not guide a needle, teleport, or manage external map configuration. Existing `teleports` records remain in place across upgrades.
 
 ## Player use
@@ -50,3 +53,9 @@ The test-only spawn chest feature is disabled by default. Enabling it requires b
 ## Build
 
 Run `automation/build-navigator.sh` with Docker. It uses a digest-pinned Maven 3.9.9 / Eclipse Temurin 21 image and runs `mvn --batch-mode --no-transfer-progress clean verify`. The jar is `target/awepeeps-navigator-1.6.1.jar`.
+
+## Repository docs
+
+- [`AGENTS.md`](AGENTS.md) — repository-wide retirement guidance; this repository is read-only.
+- [`.agents/skills/navigator-retirement-guard/SKILL.md`](.agents/skills/navigator-retirement-guard/SKILL.md)
+  — how to handle Navigator without reactivating it.
